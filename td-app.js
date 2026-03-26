@@ -191,7 +191,7 @@ class TripDesk{
       </div>
       <div class="stop-dates">
         <div class="field"><label>Depart</label><input id="stop-dep-${i}" type="date" value="${s.dep||''}" onchange="TD._onStopChange(${i},'dep',this.value)"></div>
-        <div class="field"><label>Return / Arrive</label><input id="stop-ret-${i}" type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
+        <div class="field"><label>Arrive</label><input id="stop-ret-${i}" type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
       </div>
     </div>`).join('');
   }
