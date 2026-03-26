@@ -50,7 +50,7 @@ const API={
   gasPost(p){return fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(p),redirect:'follow'}).then(r=>r.json()).catch(()=>null);}
 };
 
-function saveSession(id,tk){localStorage.setItem('td_session',JSON.stringify({id,tk,exp:Date.now()+12*3600000}));}
+function saveSession(id){localStorage.setItem('td_session',JSON.stringify({id,exp:Date.now()+12*3600000}));}
 function getSession(){try{const s=JSON.parse(localStorage.getItem('td_session')||'null');return(s&&s.id&&Date.now()<s.exp)?s:null;}catch(e){return null;}}
 function clearSession(){localStorage.removeItem('td_session');}
 
@@ -80,14 +80,14 @@ class TripDesk{
   async login(){
     const id=$('login-id').value.trim().toUpperCase(),pass=$('login-pass').value,err=$('login-err');err.textContent='';
     if(!id||!pass){err.textContent='Enter Staff ID and password.';return;}
+    showLoader('Signing in…');
     const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
-    if(!rows||!rows.length){err.textContent='Staff ID not found.';return;}
-    const s=rows[0];if(String(s.password)!==String(pass)){err.textContent='Incorrect password.';return;}
-    const tk=Date.now().toString(36)+Math.random().toString(36).slice(2);
-    await API.ins('trip_sessions',{staff_id:id,token:tk,expires_at:new Date(Date.now()+12*3600000).toISOString()});
-    saveSession(id,tk);
+    if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
+    const s=rows[0];if(String(s.password)!==String(pass)){hideLoader();err.textContent='Incorrect password.';return;}
+    saveSession(id);
     this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
-    showLoader('Loading trip data…');await this._hydrate();this._enter();
+    $('lo-text').textContent='Loading trip data…';
+    await this._hydrate();this._enter();
   }
 
   async _hydrate(){
@@ -112,7 +112,7 @@ class TripDesk{
     hideLoader();
   }
 
-  logout(){if(this.user)API.del('trip_sessions','staff_id=eq.'+encodeURIComponent(this.user.id)).catch(()=>{});clearSession();this.user=null;this._showView('login-view');}
+  logout(){clearSession();this.user=null;this._showView('login-view');}
   _showView(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');}
   showTab(scope,name,btn){const p=$(scope+'-'+name)?.closest('.main-content');if(p)p.querySelectorAll('.tabpanel').forEach(x=>x.classList.remove('active'));$(scope+'-'+name)?.classList.add('active');const tabs=$(scope+'-tabs');if(tabs)tabs.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));if(btn)btn.classList.add('active');}
   _populateProjects(){const sel=$('tr-project');if(!sel)return;sel.innerHTML='<option value="">— Select project —</option>'+this.projects.map(p=>`<option value="${p.name}">${p.name}${p.code?' ('+p.code+')':''}</option>`).join('');}
@@ -496,8 +496,6 @@ const TD=new TripDesk();
 (async function(){
   const s=getSession();if(!s)return;
   showLoader('Restoring session…');$('login-view').style.display='none';
-  const rows=await API.get('trip_sessions','staff_id=eq.'+encodeURIComponent(s.id)+'&token=eq.'+encodeURIComponent(s.tk));
-  if(!rows||!rows.length){clearSession();hideLoader();$('login-view').style.display='';$('login-view').classList.add('active');return;}
   const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
   if(!staff||!staff.length){clearSession();hideLoader();$('login-view').style.display='';$('login-view').classList.add('active');return;}
   const u=staff[0];TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
