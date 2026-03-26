@@ -131,11 +131,14 @@ class TripDesk{
   logout(){
     clearSession();this.user=null;
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    $('login-view').classList.add('active');
+    const lv=$('login-view');if(lv){lv.style.display='';lv.classList.add('active');}
+    const bg=document.querySelector('.login-bg');if(bg)bg.style.display='';
   }
   _showView(id){
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    $(id).classList.add('active');
+    const target=$(id);if(target)target.classList.add('active');
+    const bg=document.querySelector('.login-bg');
+    if(bg)bg.style.display=(id==='login-view')?'':'none';
   }
   showTab(scope,name,btn){const p=$(scope+'-'+name)?.closest('.main-content');if(p)p.querySelectorAll('.tabpanel').forEach(x=>x.classList.remove('active'));$(scope+'-'+name)?.classList.add('active');const tabs=$(scope+'-tabs');if(tabs)tabs.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));if(btn)btn.classList.add('active');}
   _populateProjects(){const sel=$('tr-project');if(!sel)return;sel.innerHTML='<option value="">— Select project —</option>'+this.projects.map(p=>`<option value="${p.name}">${p.name}${p.code?' ('+p.code+')':''}</option>`).join('');}
@@ -161,9 +164,18 @@ class TripDesk{
 
   _onStopChange(i,field,val){
     this._stops[i][field]=val;
-    if(field==='to'&&i<this._stops.length-1)this._stops[i+1].from=val;
-    if(field==='ret'&&i<this._stops.length-1&&!this._stops[i+1].dep)this._stops[i+1].dep=val;
-    this._renderStops();
+    // Auto-chain next stop's "from" when "to" changes
+    if(field==='to'&&i<this._stops.length-1){
+      this._stops[i+1].from=val;
+      const nextFrom=document.querySelector(`#stop-from-${i+1}`);
+      if(nextFrom)nextFrom.value=val;
+    }
+    // Auto-chain next stop's "dep" when "ret" changes
+    if(field==='ret'&&i<this._stops.length-1&&!this._stops[i+1].dep){
+      this._stops[i+1].dep=val;
+      const nextDep=document.querySelector(`#stop-dep-${i+1}`);
+      if(nextDep)nextDep.value=val;
+    }
     this._updateSummary();
   }
 
@@ -173,13 +185,13 @@ class TripDesk{
       <div class="stop-num">STOP ${i+1}</div>
       ${this._stops.length>1?`<button class="stop-remove" onclick="TD.removeStop(${i})" title="Remove stop">✕</button>`:''}
       <div class="stop-row">
-        <div class="field"><label>From</label><input value="${s.from||''}" ${i>0?'readonly style="background:#eee;cursor:not-allowed"':''} oninput="TD._onStopChange(${i},'from',this.value)" placeholder="Origin"></div>
+        <div class="field"><label>From</label><input id="stop-from-${i}" value="${s.from||''}" ${i>0?'readonly style="background:#eee;cursor:not-allowed"':''} oninput="TD._onStopChange(${i},'from',this.value)" placeholder="Origin"></div>
         <div class="stop-arrow">→</div>
-        <div class="field"><label>To</label><input value="${s.to||''}" oninput="TD._onStopChange(${i},'to',this.value)" placeholder="Destination"></div>
+        <div class="field"><label>To</label><input id="stop-to-${i}" value="${s.to||''}" oninput="TD._onStopChange(${i},'to',this.value)" placeholder="Destination"></div>
       </div>
       <div class="stop-dates">
-        <div class="field"><label>Depart</label><input type="date" value="${s.dep||''}" onchange="TD._onStopChange(${i},'dep',this.value)"></div>
-        <div class="field"><label>Return / Arrive</label><input type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
+        <div class="field"><label>Depart</label><input id="stop-dep-${i}" type="date" value="${s.dep||''}" onchange="TD._onStopChange(${i},'dep',this.value)"></div>
+        <div class="field"><label>Return / Arrive</label><input id="stop-ret-${i}" type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
       </div>
     </div>`).join('');
   }
@@ -512,6 +524,35 @@ class TripDesk{
     }
     h+='</div>';box.innerHTML=h;
   }
+
+  /* ── Staff Availability Calendar ── */
+  _stCalM=new Date().getMonth();_stCalY=new Date().getFullYear();
+  _renderStaffCal(){
+    const box=$('st-calendar');if(!box)return;
+    const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const m=this._stCalM,y=this._stCalY,first=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate(),todayStr=new Date().toISOString().slice(0,10);
+    let h=`<div class="cal-nav"><button onclick="TD._stCalM--;if(TD._stCalM<0){TD._stCalM=11;TD._stCalY--;}TD._renderStaffCal()">◀</button><span>${MN[m]} ${y}</span><button onclick="TD._stCalM++;if(TD._stCalM>11){TD._stCalM=0;TD._stCalY++;}TD._renderStaffCal()">▶</button></div>`;
+    h+=`<div style="display:flex;gap:.8rem;justify-content:center;margin-bottom:.6rem;font-size:.65rem;font-weight:600">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#dcfce7;border:1px solid #86efac;vertical-align:middle;margin-right:3px"></span>Available</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fef9c3;border:1px solid #fde047;vertical-align:middle;margin-right:3px"></span>1 Trip</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fecaca;border:1px solid #f87171;vertical-align:middle;margin-right:3px"></span>Fully Booked</span>
+    </div>`;
+    h+='<div class="cal-grid">';
+    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{h+=`<div class="cal-hdr">${d}</div>`;});
+    for(let i=0;i<first;i++)h+='<div class="cal-day" style="background:transparent;border:none"></div>';
+    for(let d=1;d<=days;d++){
+      const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dayTrips=[];this.trips.forEach(t=>{if(t.status==='rejected')return;parseStops(t.stops).forEach(s=>{if(ds>=s.depDate&&ds<=s.retDate&&!dayTrips.find(x=>x.id===t.id))dayTrips.push(t);});});
+      const count=dayTrips.length;
+      const bg=count>=MAX_CONCURRENT?'#fecaca':count===1?'#fef9c3':ds>=todayStr?'#dcfce7':'';
+      const border=count>=MAX_CONCURRENT?'#f87171':count===1?'#fde047':ds===todayStr?'var(--teal)':'var(--surf2)';
+      h+=`<div class="cal-day" style="background:${bg};border-color:${border}"><div class="cal-num">${d}</div>`;
+      if(count>=MAX_CONCURRENT)h+=`<span style="font-size:.5rem;font-weight:700;color:#991b1b">FULL</span>`;
+      else if(count===1)h+=`<span style="font-size:.5rem;color:#92400e">${dayTrips[0].officer.split(' ')[0]}</span>`;
+      h+='</div>';
+    }
+    h+='</div>';box.innerHTML=h;
+  }
 }
 
 const TD=new TripDesk();
@@ -519,12 +560,14 @@ const TD=new TripDesk();
 (async function(){
   const s=getSession();if(!s)return;
   showLoader('Restoring session…');
-  $('login-view').classList.remove('active');
+  const lv=$('login-view');if(lv)lv.style.display='none';
+  const bg=document.querySelector('.login-bg');if(bg)bg.style.display='none';
   try{
     const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
     if(!staff||!staff.length){
       clearSession();hideLoader();
-      $('login-view').classList.add('active');
+      if(lv){lv.style.display='';lv.classList.add('active');}
+      if(bg)bg.style.display='';
       return;
     }
     const u=staff[0];
@@ -535,6 +578,7 @@ const TD=new TripDesk();
   }catch(e){
     console.error('Session restore error:',e);
     clearSession();hideLoader();
-    $('login-view').classList.add('active');
+    if(lv){lv.style.display='';lv.classList.add('active');}
+    if(bg)bg.style.display='';
   }
 })();
