@@ -47,9 +47,9 @@ const API={
   async _q(p,o={}){
     try{
       const r=await fetch(SUPA.URL+'/rest/v1/'+p,{headers:this._h(),...o});
-      if(!r.ok){console.warn('Supa error:',r.status,await r.text());return null;}
+      if(!r.ok){console.warn('Supa error:',r.status,p);return null;}
       const t=await r.text();return t?JSON.parse(t):[];
-    }catch(e){console.warn('Supa fetch error:',e);return null;}
+    }catch(e){console.warn('Supa fetch:',e.message,p);return null;}
   },
   get(t,q=''){return this._q(t+(q?'?'+q:''));},ins(t,d){return this._q(t,{method:'POST',body:JSON.stringify(d)});},
   upd(t,q,d){return this._q(t+'?'+q,{method:'PATCH',body:JSON.stringify(d)});},del(t,q){return this._q(t+'?'+q,{method:'DELETE'});},
@@ -87,17 +87,21 @@ class TripDesk{
     const id=$('login-id').value.trim().toUpperCase(),pass=$('login-pass').value,err=$('login-err');err.textContent='';
     if(!id||!pass){err.textContent='Enter Staff ID and password.';return;}
     showLoader('Signing in…');
-    const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
-    if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
-    const s=rows[0];
-    // Handle both 'password' and 'pass' column names
-    const storedPass=s.password!==undefined?s.password:s.pass;
-    console.log('Login debug — stored:',JSON.stringify(storedPass),'typed:',JSON.stringify(pass),'match:',String(storedPass)===String(pass));
-    if(String(storedPass)!==String(pass)){hideLoader();err.textContent='Incorrect password.';return;}
-    saveSession(id);
-    this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
-    $('lo-text').textContent='Loading trip data…';
-    await this._hydrate();this._enter();
+    try{
+      const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
+      if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
+      const s=rows[0];
+      // Handle password — Supabase may store as number or string
+      const storedPass=s.password!==undefined?s.password:s.pass;
+      if(String(storedPass).trim()!==String(pass).trim()){hideLoader();err.textContent='Incorrect password.';return;}
+      saveSession(id);
+      this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
+      $('lo-text').textContent='Loading trip data…';
+      await this._hydrate();this._enter();
+    }catch(e){
+      console.error('Login error:',e);
+      hideLoader();err.textContent='Connection error. Please try again.';
+    }
   }
 
   async _hydrate(){
@@ -109,36 +113,30 @@ class TripDesk{
   }
 
   _enter(){
-    if(this.user.role==='admin'){
-      this._showView('admin-view');$('ad-uname').textContent=this.user.name;this._populateUnitFilter();
-      this.renderDash();this.renderPending();this.renderAllTrips();this.renderVehicles();this.renderProjects();this.renderStaff();this._renderCal();
-    }else{
-      this._showView('staff-view');$('st-uname').textContent=this.user.name;
-      const av=$('st-av');if(av){av.textContent=ini(this.user.name);av.style.background=this.user.color;}
-      const me=this.staff.find(s=>s.id===this.user.id);
-      if(me&&isDriver(me)){$('staff-tabs').children[0].style.display='none';this.showTab('staff','mytrips',$('staff-tabs').children[1]);}
-      this._populateProjects();this._initStops();this.renderMyTrips();
-    }
+    try{
+      if(this.user.role==='admin'){
+        this._showView('admin-view');$('ad-uname').textContent=this.user.name;this._populateUnitFilter();
+        this.renderDash();this.renderPending();this.renderAllTrips();this.renderVehicles();this.renderProjects();this.renderStaff();this._renderCal();
+      }else{
+        this._showView('staff-view');$('st-uname').textContent=this.user.name;
+        const av=$('st-av');if(av){av.textContent=ini(this.user.name);av.style.background=this.user.color;}
+        const me=this.staff.find(s=>s.id===this.user.id);
+        if(me&&isDriver(me)){$('staff-tabs').children[0].style.display='none';this.showTab('staff','mytrips',$('staff-tabs').children[1]);}
+        this._populateProjects();this._initStops();this.renderMyTrips();
+      }
+    }catch(e){console.error('_enter error:',e);}
     hideLoader();
   }
 
   logout(){
-    clearSession();
-    this.user=null;
-    // Reset all views
+    clearSession();this.user=null;
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    // Show login
-    const lv=$('login-view');
-    if(lv){lv.style.display='';lv.classList.add('active');}
-    // Show login background
-    const bg=document.querySelector('.login-bg');
-    if(bg)bg.style.display='';
+    const lv=$('login-view');if(lv){lv.style.display='';lv.classList.add('active');}
+    const bg=document.querySelector('.login-bg');if(bg)bg.style.display='';
   }
   _showView(id){
-    document.querySelectorAll('.view').forEach(v=>{v.classList.remove('active');v.style.display='';});
-    const target=$(id);
-    if(target)target.classList.add('active');
-    // Hide login background when not on login
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    const target=$(id);if(target)target.classList.add('active');
     const bg=document.querySelector('.login-bg');
     if(bg)bg.style.display=(id==='login-view')?'':'none';
   }
@@ -524,19 +522,25 @@ const TD=new TripDesk();
 (async function(){
   const s=getSession();if(!s)return;
   showLoader('Restoring session…');
-  // Hide login view while restoring
   const lv=$('login-view');if(lv)lv.style.display='none';
   const bg=document.querySelector('.login-bg');if(bg)bg.style.display='none';
-  
-  const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
-  if(!staff||!staff.length){
+  try{
+    const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
+    if(!staff||!staff.length){
+      clearSession();hideLoader();
+      if(lv){lv.style.display='';lv.classList.add('active');}
+      if(bg)bg.style.display='';
+      return;
+    }
+    const u=staff[0];
+    TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
+    $('lo-text').textContent='Loading trip data…';
+    await TD._hydrate();
+    TD._enter();
+  }catch(e){
+    console.error('Session restore error:',e);
     clearSession();hideLoader();
     if(lv){lv.style.display='';lv.classList.add('active');}
     if(bg)bg.style.display='';
-    return;
   }
-  const u=staff[0];
-  TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
-  $('lo-text').textContent='Loading trip data…';
-  await TD._hydrate();TD._enter();
 })();
