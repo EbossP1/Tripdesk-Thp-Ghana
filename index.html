@@ -10,7 +10,7 @@
 <body>
 
 <div id="loading-overlay">
-  <div class="lo-ring"><div class="lo-spinner"></div><img class="lo-logo" src="thp_Logo.png" alt="THP" onerror="this.style.display='none'"></div>
+  <div class="lo-ring"><div class="lo-spinner"></div><img class="lo-logo" src="thp_logo.png" alt="THP" onerror="this.style.display='none'"></div>
   <div class="lo-text" id="lo-text">Loading TripDesk…</div>
 </div>
 
@@ -38,6 +38,7 @@
   <nav class="tabs" id="staff-tabs">
     <button class="tab active" onclick="TD.showTab('staff','request',this)">🚗 Request Trip</button>
     <button class="tab" onclick="TD.showTab('staff','mytrips',this)">📋 My Trips</button>
+    <button class="tab" onclick="TD.showTab('staff','cal',this);TD._renderStaffCal()">📅 Availability</button>
     <button class="tab" onclick="TD.showTab('staff','chpw',this)">🔑 Password</button>
   </nav>
   <main class="main-content">
@@ -63,6 +64,13 @@
       </div>
     </div>
     <div id="staff-mytrips" class="tabpanel"><div id="st-trips-cards"></div></div>
+    <div id="staff-cal" class="tabpanel">
+      <div class="card">
+        <h3>📅 Trip Availability</h3>
+        <p class="card-sub">Check which dates are available before requesting. Days with <strong>2 trips</strong> are fully booked (max 2 drivers).</p>
+        <div id="st-calendar"></div>
+      </div>
+    </div>
     <div id="staff-chpw" class="tabpanel">
       <div class="card" style="max-width:420px">
         <h3>🔑 Change Password</h3>
