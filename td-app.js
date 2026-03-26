@@ -44,7 +44,13 @@ function generateStaffId(joinDateStr, existingIds=[]){
 
 const API={
   _h(){return{'apikey':SUPA.KEY,'Authorization':'Bearer '+SUPA.KEY,'Content-Type':'application/json','Prefer':'return=representation'};},
-  async _q(p,o={}){try{const r=await fetch(SUPA.URL+'/rest/v1/'+p,{headers:this._h(),...o});if(!r.ok)return null;const t=await r.text();return t?JSON.parse(t):[];}catch(e){return null;}},
+  async _q(p,o={}){
+    try{
+      const r=await fetch(SUPA.URL+'/rest/v1/'+p,{headers:this._h(),...o});
+      if(!r.ok){console.warn('Supa error:',r.status,await r.text());return null;}
+      const t=await r.text();return t?JSON.parse(t):[];
+    }catch(e){console.warn('Supa fetch error:',e);return null;}
+  },
   get(t,q=''){return this._q(t+(q?'?'+q:''));},ins(t,d){return this._q(t,{method:'POST',body:JSON.stringify(d)});},
   upd(t,q,d){return this._q(t+'?'+q,{method:'PATCH',body:JSON.stringify(d)});},del(t,q){return this._q(t+'?'+q,{method:'DELETE'});},
   gasPost(p){return fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(p),redirect:'follow'}).then(r=>r.json()).catch(()=>null);}
@@ -83,7 +89,11 @@ class TripDesk{
     showLoader('Signing in…');
     const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
     if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
-    const s=rows[0];if(String(s.password)!==String(pass)){hideLoader();err.textContent='Incorrect password.';return;}
+    const s=rows[0];
+    // Handle both 'password' and 'pass' column names
+    const storedPass=s.password!==undefined?s.password:s.pass;
+    console.log('Login debug — stored:',JSON.stringify(storedPass),'typed:',JSON.stringify(pass),'match:',String(storedPass)===String(pass));
+    if(String(storedPass)!==String(pass)){hideLoader();err.textContent='Incorrect password.';return;}
     saveSession(id);
     this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
     $('lo-text').textContent='Loading trip data…';
@@ -112,8 +122,26 @@ class TripDesk{
     hideLoader();
   }
 
-  logout(){clearSession();this.user=null;this._showView('login-view');}
-  _showView(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');}
+  logout(){
+    clearSession();
+    this.user=null;
+    // Reset all views
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    // Show login
+    const lv=$('login-view');
+    if(lv){lv.style.display='';lv.classList.add('active');}
+    // Show login background
+    const bg=document.querySelector('.login-bg');
+    if(bg)bg.style.display='';
+  }
+  _showView(id){
+    document.querySelectorAll('.view').forEach(v=>{v.classList.remove('active');v.style.display='';});
+    const target=$(id);
+    if(target)target.classList.add('active');
+    // Hide login background when not on login
+    const bg=document.querySelector('.login-bg');
+    if(bg)bg.style.display=(id==='login-view')?'':'none';
+  }
   showTab(scope,name,btn){const p=$(scope+'-'+name)?.closest('.main-content');if(p)p.querySelectorAll('.tabpanel').forEach(x=>x.classList.remove('active'));$(scope+'-'+name)?.classList.add('active');const tabs=$(scope+'-tabs');if(tabs)tabs.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));if(btn)btn.classList.add('active');}
   _populateProjects(){const sel=$('tr-project');if(!sel)return;sel.innerHTML='<option value="">— Select project —</option>'+this.projects.map(p=>`<option value="${p.name}">${p.name}${p.code?' ('+p.code+')':''}</option>`).join('');}
   _populateUnitFilter(){const sel=$('ad-trip-unit');if(!sel)return;const u=[...new Set(this.staff.map(s=>s.unit).filter(Boolean))].sort();sel.innerHTML='<option value="">All Units</option>'+u.map(x=>`<option>${x}</option>`).join('');}
@@ -495,9 +523,20 @@ const TD=new TripDesk();
 
 (async function(){
   const s=getSession();if(!s)return;
-  showLoader('Restoring session…');$('login-view').style.display='none';
+  showLoader('Restoring session…');
+  // Hide login view while restoring
+  const lv=$('login-view');if(lv)lv.style.display='none';
+  const bg=document.querySelector('.login-bg');if(bg)bg.style.display='none';
+  
   const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
-  if(!staff||!staff.length){clearSession();hideLoader();$('login-view').style.display='';$('login-view').classList.add('active');return;}
-  const u=staff[0];TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
-  $('lo-text').textContent='Loading trip data…';await TD._hydrate();TD._enter();
+  if(!staff||!staff.length){
+    clearSession();hideLoader();
+    if(lv){lv.style.display='';lv.classList.add('active');}
+    if(bg)bg.style.display='';
+    return;
+  }
+  const u=staff[0];
+  TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
+  $('lo-text').textContent='Loading trip data…';
+  await TD._hydrate();TD._enter();
 })();
