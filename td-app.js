@@ -131,14 +131,11 @@ class TripDesk{
   logout(){
     clearSession();this.user=null;
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    const lv=$('login-view');if(lv){lv.style.display='';lv.classList.add('active');}
-    const bg=document.querySelector('.login-bg');if(bg)bg.style.display='';
+    $('login-view').classList.add('active');
   }
   _showView(id){
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    const target=$(id);if(target)target.classList.add('active');
-    const bg=document.querySelector('.login-bg');
-    if(bg)bg.style.display=(id==='login-view')?'':'none';
+    $(id).classList.add('active');
   }
   showTab(scope,name,btn){const p=$(scope+'-'+name)?.closest('.main-content');if(p)p.querySelectorAll('.tabpanel').forEach(x=>x.classList.remove('active'));$(scope+'-'+name)?.classList.add('active');const tabs=$(scope+'-tabs');if(tabs)tabs.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));if(btn)btn.classList.add('active');}
   _populateProjects(){const sel=$('tr-project');if(!sel)return;sel.innerHTML='<option value="">— Select project —</option>'+this.projects.map(p=>`<option value="${p.name}">${p.name}${p.code?' ('+p.code+')':''}</option>`).join('');}
@@ -522,14 +519,12 @@ const TD=new TripDesk();
 (async function(){
   const s=getSession();if(!s)return;
   showLoader('Restoring session…');
-  const lv=$('login-view');if(lv)lv.style.display='none';
-  const bg=document.querySelector('.login-bg');if(bg)bg.style.display='none';
+  $('login-view').classList.remove('active');
   try{
     const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
     if(!staff||!staff.length){
       clearSession();hideLoader();
-      if(lv){lv.style.display='';lv.classList.add('active');}
-      if(bg)bg.style.display='';
+      $('login-view').classList.add('active');
       return;
     }
     const u=staff[0];
@@ -540,7 +535,6 @@ const TD=new TripDesk();
   }catch(e){
     console.error('Session restore error:',e);
     clearSession();hideLoader();
-    if(lv){lv.style.display='';lv.classList.add('active');}
-    if(bg)bg.style.display='';
+    $('login-view').classList.add('active');
   }
 })();
