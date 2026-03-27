@@ -18,9 +18,9 @@ const MAX_CONCURRENT=2;
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
 
-/* ── TRANSPORT_IDS now derived dynamically from role='driver' in staff table ──
-   Legacy hard-coded list kept as fallback. */
-const LEGACY_TRANSPORT_IDS=['THP012','THP013','THP014','THP024'];
+/* ── Drivers: identified by role='driver' in staff table.
+   Legacy fallback list for staff who haven't had role updated yet. */
+const LEGACY_TRANSPORT_IDS=['THP012','THP013','THP014','THP024','THPG/07/2024-2','THPG/08/2012','THPG/03/2012'];
 function isDriver(staffObj){return staffObj.role==='driver'||LEGACY_TRANSPORT_IDS.includes(staffObj.id);}
 
 /* ─── Staff ID generator: THPG/MM/YYYY ───────────────────────────────────
@@ -191,7 +191,7 @@ class TripDesk{
       </div>
       <div class="stop-dates">
         <div class="field"><label>Depart</label><input id="stop-dep-${i}" type="date" value="${s.dep||''}" onchange="TD._onStopChange(${i},'dep',this.value)"></div>
-        <div class="field"><label>Arrive</label><input id="stop-ret-${i}" type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
+        <div class="field"><label>Return / Arrive</label><input id="stop-ret-${i}" type="date" value="${s.ret||''}" onchange="TD._onStopChange(${i},'ret',this.value)"></div>
       </div>
     </div>`).join('');
   }
@@ -482,6 +482,7 @@ class TripDesk{
         ${s.email?`<div style="font-size:.6rem;color:var(--text3);margin-bottom:.3rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.email}">✉ ${s.email}</div>`:''}
         <div class="scard-btns">
           <button class="btn-sm btn-outline" onclick="TD.resetStaffPass('${s.id}')">🔑 Reset</button>
+          ${s.role!=='admin'?`<button class="btn-sm ${isDriver(s)?'btn-teal':'btn-outline'}" onclick="TD.toggleDriverRole('${s.id}')">${isDriver(s)?'✓ Driver':'Set Driver'}</button>`:''}
           <button class="btn-sm btn-red" onclick="TD.removeStaff('${s.id}','${s.name.replace(/'/g,'')}')">🗑</button>
         </div>
       </div>`;
@@ -489,6 +490,17 @@ class TripDesk{
   }
 
   async resetStaffPass(id){if(!confirm('Reset password to "1234"?'))return;await API.upd('staff','id=eq.'+encodeURIComponent(id),{password:'1234'});toast('Password reset to 1234');}
+
+  async toggleDriverRole(id){
+    const s=this.staff.find(x=>x.id===id);if(!s)return;
+    const currentlyDriver=isDriver(s);
+    const newRole=currentlyDriver?'staff':'driver';
+    if(!confirm(`${currentlyDriver?'Remove driver role from':'Set as driver:'} ${s.name}?`))return;
+    await API.upd('staff','id=eq.'+encodeURIComponent(id),{role:newRole});
+    s.role=newRole;
+    this.renderStaff();
+    toast(s.name+' is now '+(newRole==='driver'?'a Driver':'Staff'));
+  }
 
   async removeStaff(id,name){
     if(!confirm(`Remove ${name} (${id}) from TripDesk?\n\nThis does not delete their trip history.`))return;
