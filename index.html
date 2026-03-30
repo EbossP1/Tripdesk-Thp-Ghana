@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="td-styles.css">
+<link rel="stylesheet" href="td-styles.css?v=5">
 </head>
 <body>
 
@@ -16,7 +16,14 @@
 
 <!-- ═══ LOGIN ═══ -->
 <section id="login-view" class="view active">
-  <div class="login-bg"><div class="login-orb login-orb-1"></div><div class="login-orb login-orb-2"></div></div>
+  <div class="login-bg">
+    <div class="login-orb login-orb-1"></div>
+    <div class="login-orb login-orb-2"></div>
+    <div class="road-anim">
+      <div class="road-line"></div>
+      <div class="vehicle-wrap"><span class="vehicle-car">🚗</span></div>
+    </div>
+  </div>
   <div class="login-card">
     <div class="login-icon">🚗</div>
     <div class="login-title">TripDesk</div>
@@ -25,6 +32,7 @@
     <div class="lf"><label>Password</label><div class="lf-pw"><input type="password" id="login-pass" placeholder="Enter password" onkeydown="if(event.key==='Enter')TD.login()"><button class="lf-eye" onclick="let i=$('login-pass');i.type=i.type==='password'?'text':'password'">👁</button></div></div>
     <div id="login-err" class="lf-err"></div>
     <button class="btn-primary" onclick="TD.login()"><span>Sign In</span></button>
+    <div class="login-links"><button class="lf-link" onclick="TD.openResetModal()">Forgot password?</button></div>
     <div class="login-foot">© 2026 The Hunger Project – Ghana</div>
   </div>
 </section>
@@ -36,21 +44,28 @@
     <div class="tb-right"><div class="tb-user"><div class="av av-sm" id="st-av">U</div><span id="st-uname">Staff</span></div><button class="btn-sm btn-outline" onclick="TD.logout()">Sign Out</button></div>
   </header>
   <nav class="tabs" id="staff-tabs">
-    <button class="tab active" onclick="TD.showTab('staff','request',this)">🚗 Request Trip</button>
+    <button class="tab active" onclick="TD.showTab('staff','cal',this);TD._renderStaffCal()">📅 Availability</button>
+    <button class="tab" onclick="TD.showTab('staff','request',this)">🚗 Request Trip</button>
     <button class="tab" onclick="TD.showTab('staff','mytrips',this)">📋 My Trips</button>
-    <button class="tab" onclick="TD.showTab('staff','cal',this);TD._renderStaffCal()">📅 Availability</button>
     <button class="tab" onclick="TD.showTab('staff','chpw',this)">🔑 Password</button>
   </nav>
   <main class="main-content">
-    <div id="staff-request" class="tabpanel active">
+    <div id="staff-cal" class="tabpanel active">
+      <div class="card">
+        <h3>📅 Trip Availability</h3>
+        <p class="card-sub">Check available dates before requesting. Days with <strong>2 trips</strong> are fully booked.</p>
+        <div id="st-calendar"></div>
+      </div>
+    </div>
+    <div id="staff-request" class="tabpanel">
       <div class="card">
         <h3>📝 New Trip Request</h3>
-        <p class="card-sub">Fill in the trip details. Add multiple stops if visiting several locations.</p>
+        <p class="card-sub">Fill in the trip details. Your request will go to your supervisor for approval first.</p>
         <div class="form-grid">
           <div class="field"><label>Project <span class="req">*</span></label><select id="tr-project"><option value="">— Select project —</option></select></div>
+          <div class="field"><label>Supervisor <span class="req">*</span></label><select id="tr-supervisor"><option value="">— Select supervisor —</option></select></div>
           <div class="field full"><label>Purpose <span class="req">*</span></label><textarea id="tr-purpose" placeholder="Describe the purpose of the trip…"></textarea></div>
         </div>
-        <!-- Multi-stop itinerary builder -->
         <div class="itin-section">
           <div class="itin-label">🗺 Itinerary <span class="req">*</span></div>
           <div id="stops-list"></div>
@@ -64,13 +79,6 @@
       </div>
     </div>
     <div id="staff-mytrips" class="tabpanel"><div id="st-trips-cards"></div></div>
-    <div id="staff-cal" class="tabpanel">
-      <div class="card">
-        <h3>📅 Trip Availability</h3>
-        <p class="card-sub">Check which dates are available before requesting. Days with <strong>2 trips</strong> are fully booked (max 2 drivers).</p>
-        <div id="st-calendar"></div>
-      </div>
-    </div>
     <div id="staff-chpw" class="tabpanel">
       <div class="card" style="max-width:420px">
         <h3>🔑 Change Password</h3>
@@ -84,6 +92,51 @@
   </main>
 </section>
 
+<!-- ═══ SUPERVISOR VIEW ═══ -->
+<section id="supervisor-view" class="view">
+  <header class="topbar">
+    <div class="tb-left"><span class="tb-logo">🚗</span><span class="tb-brand">TripDesk <small>Supervisor</small></span></div>
+    <div class="tb-right"><div class="tb-user"><div class="av av-sm" style="background:#D97706" id="sv-av">S</div><span id="sv-uname">Supervisor</span></div><button class="btn-sm btn-outline" onclick="TD.logout()">Sign Out</button></div>
+  </header>
+  <nav class="tabs" id="supervisor-tabs">
+    <button class="tab active" onclick="TD.showTab('supervisor','pending',this)"><span id="sv-pending-badge" class="tab-badge"></span>🏷 Pending Review</button>
+    <button class="tab" onclick="TD.showTab('supervisor','alltrips',this)">📋 All Trips</button>
+    <button class="tab" onclick="TD.showTab('supervisor','chpw',this)">🔑 Password</button>
+  </nav>
+  <main class="main-content">
+    <div id="supervisor-pending" class="tabpanel active">
+      <div class="card">
+        <h3>🏷 Trips Awaiting Your Review</h3>
+        <p class="card-sub">These staff members have selected you as their supervisor. Approve to forward to admin for vehicle assignment, or reject with a note.</p>
+        <div id="sv-pending-list"></div>
+      </div>
+    </div>
+    <div id="supervisor-alltrips" class="tabpanel">
+      <div class="card">
+        <div class="card-hdr">
+          <h3>📋 All Trips</h3>
+          <div class="card-tools">
+            <select class="fi" id="sv-trip-status" onchange="TD.renderSupervisorAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Forwarded to Admin</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+            <input class="fi" type="month" id="sv-trip-month" onchange="TD.renderSupervisorAllTrips()">
+          </div>
+        </div>
+        <div class="results-bar">Showing <strong id="sv-trip-count">0</strong> trips</div>
+        <div class="scr"><table><thead><tr><th>Officer</th><th>Unit</th><th>Project</th><th>Route</th><th>Dates</th><th>Status</th><th>Your Decision</th></tr></thead><tbody id="sv-all-body"></tbody></table></div>
+      </div>
+    </div>
+    <div id="supervisor-chpw" class="tabpanel">
+      <div class="card" style="max-width:420px">
+        <h3>🔑 Change Password</h3>
+        <div class="field"><label>Current Password</label><input type="password" id="sv-old-pw"></div>
+        <div class="field"><label>New Password</label><input type="password" id="sv-new-pw" placeholder="At least 4 characters"></div>
+        <div class="field"><label>Confirm Password</label><input type="password" id="sv-conf-pw"></div>
+        <div id="sv-pw-msg" class="form-msg"></div>
+        <button class="btn-primary" onclick="TD.changeSupervisorPass()">Update Password</button>
+      </div>
+    </div>
+  </main>
+</section>
+
 <!-- ═══ ADMIN VIEW ═══ -->
 <section id="admin-view" class="view">
   <header class="topbar">
@@ -92,7 +145,7 @@
   </header>
   <nav class="tabs" id="admin-tabs">
     <button class="tab active" onclick="TD.showTab('admin','dashboard',this)">📊 Dashboard</button>
-    <button class="tab" onclick="TD.showTab('admin','pending',this)"><span id="ad-pending-badge" class="tab-badge"></span>🏷 Pending</button>
+    <button class="tab" onclick="TD.showTab('admin','pending',this)"><span id="ad-pending-badge" class="tab-badge"></span>🚗 Assign</button>
     <button class="tab" onclick="TD.showTab('admin','alltrips',this)">📋 All Trips</button>
     <button class="tab" onclick="TD.showTab('admin','calendar',this)">📅 Calendar</button>
     <button class="tab" onclick="TD.showTab('admin','vehicles',this)">🚘 Vehicles</button>
@@ -101,25 +154,36 @@
   </nav>
   <main class="main-content">
     <div id="admin-dashboard" class="tabpanel active">
+      <div class="dash-vehicle-banner">
+        <div class="dvb-road"><div class="dvb-car">🚗</div></div>
+        <div class="dvb-label">Welcome, <span id="ad-dash-name">Admin</span> · TripDesk Overview</div>
+      </div>
       <div class="stats" id="ad-stats"></div>
       <div class="dash-grid">
         <div class="card"><h3>🕐 Recent Trips</h3><div class="scr"><table><thead><tr><th>Officer</th><th>Route</th><th>Project</th><th>Dates</th><th>Status</th></tr></thead><tbody id="ad-recent-body"></tbody></table></div></div>
         <div class="card"><h3>🏢 Trips by Unit</h3><div id="ad-unit-chart"></div></div>
       </div>
     </div>
-    <div id="admin-pending" class="tabpanel"><div class="card"><h3>🏷 Pending Requests</h3><p class="card-sub">Review, approve or reject trip requests</p><div id="ad-pending-list"></div></div></div>
+    <!-- Admin pending = supervisor_approved only -->
+    <div id="admin-pending" class="tabpanel">
+      <div class="card">
+        <h3>🚗 Assign Driver &amp; Vehicle</h3>
+        <p class="card-sub">These trips have been approved by a supervisor. Assign a driver and vehicle to complete the approval.</p>
+        <div id="ad-pending-list"></div>
+      </div>
+    </div>
     <div id="admin-alltrips" class="tabpanel">
       <div class="card">
         <div class="card-hdr"><h3>📋 All Trips</h3>
           <div class="card-tools">
-            <select class="fi" id="ad-trip-status" onchange="TD.renderAllTrips()"><option value="">All Statuses</option><option>pending</option><option>approved</option><option>rejected</option></select>
+            <select class="fi" id="ad-trip-status" onchange="TD.renderAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Supervisor Approved</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
             <select class="fi" id="ad-trip-unit" onchange="TD.renderAllTrips()"><option value="">All Units</option></select>
             <input class="fi" type="month" id="ad-trip-month" onchange="TD.renderAllTrips()">
             <button class="btn-sm btn-teal" onclick="TD.exportCSV()">⬇ CSV</button>
           </div>
         </div>
         <div class="results-bar">Showing <strong id="ad-trip-count">0</strong> trips</div>
-        <div class="scr"><table><thead><tr><th>Officer</th><th>Unit</th><th>Project</th><th>Route</th><th>Dates</th><th>Stops</th><th>Status</th><th>Driver</th><th>Vehicle</th><th>Action</th></tr></thead><tbody id="ad-all-body"></tbody></table></div>
+        <div class="scr"><table><thead><tr><th>Officer</th><th>Unit</th><th>Project</th><th>Route</th><th>Supervisor</th><th>Dates</th><th>Status</th><th>Driver</th><th>Vehicle</th><th>Action</th></tr></thead><tbody id="ad-all-body"></tbody></table></div>
       </div>
     </div>
     <div id="admin-calendar" class="tabpanel"><div class="card"><h3>📅 Trip Calendar</h3><div id="ad-calendar"></div></div></div>
@@ -136,36 +200,28 @@
         <div class="scr"><table><thead><tr><th>Name</th><th>Code</th><th>Description</th><th>Status</th><th>Action</th></tr></thead><tbody id="ad-proj-body"></tbody></table></div>
       </div>
     </div>
-
-    <!-- ═══ STAFF TAB ═══ -->
     <div id="admin-staff" class="tabpanel">
-
-      <!-- Add Staff Card -->
       <div class="card" id="add-staff-card">
         <div class="card-hdr">
           <h3>➕ Add New Staff Member</h3>
           <button class="btn-sm btn-outline" onclick="TD.toggleAddStaffForm()" id="add-staff-toggle">▼ Expand</button>
         </div>
         <div id="add-staff-form" style="display:none">
-          <p class="card-sub">Staff ID will be auto-generated as <strong>THPG/MM/YYYY</strong> from the join date. Provide an override if needed.</p>
+          <p class="card-sub">Staff ID auto-generated as <strong>THPG/MM/YYYY</strong> from join date.</p>
           <div class="form-grid">
             <div class="field"><label>Full Name <span class="req">*</span></label><input id="ns-name" placeholder="e.g. Ama Owusu" autocomplete="off"></div>
             <div class="field"><label>Join Date <span class="req">*</span></label><input type="date" id="ns-joindate" onchange="TD.previewStaffId()"></div>
             <div class="field"><label>Staff ID <span class="req">*</span></label>
               <div style="display:flex;gap:.4rem;align-items:center">
                 <input id="ns-id" placeholder="Auto from join date" oninput="this.value=this.value.toUpperCase()" style="flex:1">
-                <button class="btn-sm btn-outline" onclick="TD.previewStaffId()" title="Re-generate from join date">↺</button>
+                <button class="btn-sm btn-outline" onclick="TD.previewStaffId()" title="Re-generate">↺</button>
               </div>
-              <span id="ns-id-hint" style="font-size:.62rem;color:var(--text3);margin-top:.15rem;display:block"></span>
+              <span id="ns-id-hint" style="font-size:.62rem;color:var(--teal);margin-top:.15rem;display:block;font-style:italic"></span>
             </div>
             <div class="field"><label>Unit / Programme <span class="req">*</span></label><input id="ns-unit" placeholder="e.g. WASH, MEAL, Finance"></div>
             <div class="field"><label>Email</label><input type="email" id="ns-email" placeholder="name@thp-ghana.org"></div>
             <div class="field"><label>Role</label>
-              <select id="ns-role">
-                <option value="staff">Staff</option>
-                <option value="driver">Driver</option>
-                <option value="admin">Admin</option>
-              </select>
+              <select id="ns-role"><option value="staff">Staff</option><option value="driver">Driver</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select>
             </div>
             <div class="field"><label>Initial Password <span class="req">*</span></label><input type="text" id="ns-pass" value="1234" placeholder="Default: 1234"></div>
           </div>
@@ -176,51 +232,72 @@
           </div>
         </div>
       </div>
-
-      <!-- Staff List Card -->
       <div class="card">
         <div class="card-hdr">
           <h3>👥 Staff Directory</h3>
           <div class="card-tools">
             <input class="fi" id="staff-search" placeholder="Search name / ID…" oninput="TD.renderStaff()" style="width:180px">
             <select class="fi" id="staff-role-filter" onchange="TD.renderStaff()">
-              <option value="">All Roles</option>
-              <option value="staff">Staff</option>
-              <option value="driver">Driver</option>
-              <option value="admin">Admin</option>
+              <option value="">All Roles</option><option value="staff">Staff</option><option value="driver">Driver</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option>
             </select>
           </div>
         </div>
         <div class="staff-grid" id="ad-staff-grid"></div>
       </div>
-
     </div>
-    <!-- END STAFF TAB -->
-
   </main>
 </section>
 
-<!-- Review Modal -->
+<!-- Supervisor Decision Modal -->
+<div class="overlay" id="sv-modal">
+  <div class="modal">
+    <h3 id="sv-tm-title">Review Trip</h3>
+    <div id="sv-tm-info" class="modal-info"></div>
+    <div id="sv-tm-stops" style="margin-bottom:.8rem"></div>
+    <div class="field"><label>Note to Staff <span class="opt">(optional)</span></label><textarea id="sv-tm-note" placeholder="Add a note for the staff member…"></textarea></div>
+    <input type="hidden" id="sv-tm-id">
+    <div class="modal-foot">
+      <button class="btn-sm btn-outline" onclick="closeModal('sv-modal')">Cancel</button>
+      <button class="btn-sm btn-gold" onclick="TD.supervisorDecide('supervisor_approved')">✓ Approve &amp; Forward</button>
+      <button class="btn-sm btn-red" onclick="TD.supervisorDecide('rejected')">✗ Reject</button>
+    </div>
+  </div>
+</div>
+
+<!-- Admin Assignment Modal -->
 <div class="overlay" id="trip-modal">
   <div class="modal">
-    <h3 id="tm-title">Review Trip</h3>
+    <h3 id="tm-title">Assign Driver &amp; Vehicle</h3>
     <div id="tm-info" class="modal-info"></div>
     <div id="tm-stops" style="margin-bottom:.8rem"></div>
     <div class="form-grid">
-      <div class="field"><label>Assign Driver</label><select id="tm-driver"><option value="">— Select driver —</option></select></div>
-      <div class="field"><label>Assign Vehicle</label><select id="tm-vehicle"><option value="">— Select vehicle —</option></select></div>
+      <div class="field"><label>Assign Driver <span class="req">*</span></label><select id="tm-driver"><option value="">— Select driver —</option></select></div>
+      <div class="field"><label>Assign Vehicle <span class="req">*</span></label><select id="tm-vehicle"><option value="">— Select vehicle —</option></select></div>
     </div>
-    <div class="field"><label>Admin Note</label><textarea id="tm-note" placeholder="Add a note…"></textarea></div>
+    <div class="field"><label>Admin Note <span class="opt">(optional)</span></label><textarea id="tm-note" placeholder="Add a note for the staff member…"></textarea></div>
     <input type="hidden" id="tm-id">
     <div class="modal-foot">
       <button class="btn-sm btn-outline" onclick="closeModal('trip-modal')">Cancel</button>
-      <button class="btn-sm btn-green" onclick="TD.decideTrip('approved')">✓ Approve</button>
-      <button class="btn-sm btn-red" onclick="TD.decideTrip('rejected')">✗ Reject</button>
+      <button class="btn-sm btn-gold" onclick="TD.adminAssign()">✓ Confirm Assignment</button>
+    </div>
+  </div>
+</div>
+
+<!-- Self Password Reset Modal -->
+<div class="overlay" id="reset-modal">
+  <div class="modal" style="max-width:380px">
+    <h3>🔑 Reset Password</h3>
+    <p class="card-sub" style="margin-bottom:.8rem">Enter your Staff ID. Your password will be reset to <strong>1234</strong>. Log in and change it immediately.</p>
+    <div class="field"><label>Staff ID</label><input type="text" id="reset-id" placeholder="e.g. THPG/01/2025" oninput="this.value=this.value.toUpperCase()"></div>
+    <div id="reset-msg" class="form-msg"></div>
+    <div class="modal-foot">
+      <button class="btn-sm btn-outline" onclick="closeModal('reset-modal')">Cancel</button>
+      <button class="btn-sm btn-gold" onclick="TD.selfResetPass()">Reset My Password</button>
     </div>
   </div>
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js"></script>
+<script src="td-app.js?v=5"></script>
 </body>
 </html>
