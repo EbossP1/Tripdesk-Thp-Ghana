@@ -37,8 +37,9 @@ function generateStaffId(joinDateStr,existingIds=[]){
    comparing or storing. Uses the browser's built-in SubtleCrypto
    API — no external libraries needed.
 ────────────────────────────────────────────────────────────── */
-async function hashPassword(plain){
-  const encoded=new TextEncoder().encode(String(plain).trim());
+async function hashPassword(plain, staffId){
+  const raw = staffId ? (staffId + ':' + String(plain).trim()) : String(plain).trim();
+  const encoded=new TextEncoder().encode(raw);
   const buf=await crypto.subtle.digest('SHA-256',encoded);
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
@@ -97,9 +98,14 @@ class TripDesk{
       const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
       if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
       const s=rows[0];
-      /* Hash the entered password with SHA-256 to match Attendance system storage */
-      const hashed=await hashPassword(pass);
-      if(extractPw(s)!==hashed){hideLoader();err.textContent='Incorrect password.';return;}
+      /* Hash the entered password with SHA-256 (salted with staff ID) to match Attendance system */
+      const hashed=await hashPassword(pass, id);
+      /* Also try plain hash for legacy/unhashed passwords */
+      const storedPw=extractPw(s);
+      if(storedPw!==hashed){
+        /* Fallback: check if stored password is plain text (default '1234' or temp password) */
+        if(storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
+      }
       saveSession(id);
       this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
       $('lo-text').textContent='Loading trip data…';
@@ -114,8 +120,8 @@ class TripDesk{
     if(!id){msg.innerHTML='<span style="color:var(--red)">Enter your Staff ID.</span>';return;}
     const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
     if(!rows||!rows.length){msg.innerHTML='<span style="color:var(--red)">Staff ID not found. Contact your admin.</span>';return;}
-    /* Store hashed '1234' so it works in both TripDesk and Attendance */
-    const hashed=await hashPassword('1234');
+    /* Store hashed '1234' (salted with staff ID) so it works in both TripDesk and Attendance */
+    const hashed=await hashPassword('1234', id);
     await API.upd('staff','id=eq.'+encodeURIComponent(id),{password:hashed});
     msg.innerHTML='<span style="color:var(--green)">✓ Password reset to <strong>1234</strong>. Log in and change it immediately.</span>';
     setTimeout(()=>closeModal('reset-modal'),2500);
@@ -573,7 +579,8 @@ class TripDesk{
     if(pass.length<4){if(msg)msg.innerHTML='<span style="color:var(--red)">Password min 4 chars.</span>';return;}
     if(this.staff.find(s=>s.id===idVal)){if(msg)msg.innerHTML=`<span style="color:var(--red)">ID <strong>${idVal}</strong> already exists.</span>`;return;}
     const color=avColor(name);showLoader('Adding…');
-    const r=await API.ins('staff',{id:idVal,name,unit,role,email:email||'',password:pass,avatar_color:color,join_date:joinDate||null});
+    const hashedPass=await hashPassword(pass, idVal);
+    const r=await API.ins('staff',{id:idVal,name,unit,role,email:email||'',password:hashedPass,avatar_color:color,join_date:joinDate||null});
     hideLoader();if(!r){toast('Failed to add staff','err');return;}
     this.staff.push({id:idVal,name,unit,role,color,email:email||''});
     this.staff.sort((a,b)=>a.name.localeCompare(b.name));
@@ -601,7 +608,7 @@ class TripDesk{
   }
   async resetStaffPass(id){
     if(!confirm('Reset password to "1234"?'))return;
-    const hashed=await hashPassword('1234');
+    const hashed=await hashPassword('1234', id);
     await API.upd('staff','id=eq.'+encodeURIComponent(id),{password:hashed});
     toast('Password reset to 1234');
   }
@@ -614,13 +621,16 @@ class TripDesk{
     if(!old||!np||!conf){msg.innerHTML='<span style="color:var(--red)">Fill all fields.</span>';return;}
     if(np.length<4){msg.innerHTML='<span style="color:var(--red)">Min 4 chars.</span>';return;}
     if(np!==conf){msg.innerHTML='<span style="color:var(--red)">Passwords don\'t match.</span>';return;}
-    const rows=await API.get('staff','id=eq.'+encodeURIComponent(this.user.id));
-    /* Hash the entered current password to compare against stored hash */
-    const hashedOld=await hashPassword(old);
-    if(!rows?.length||extractPw(rows[0])!==hashedOld){msg.innerHTML='<span style="color:var(--red)">Wrong current password.</span>';return;}
-    /* Hash the new password before storing — keeps both systems in sync */
-    const hashedNew=await hashPassword(np);
-    await API.upd('staff','id=eq.'+encodeURIComponent(this.user.id),{password:hashedNew});
+    const uid=this.user.id;
+    const rows=await API.get('staff','id=eq.'+encodeURIComponent(uid));
+    /* Hash the entered current password (salted with staff ID) to compare against stored hash */
+    const hashedOld=await hashPassword(old, uid);
+    const storedPw=rows?.length?extractPw(rows[0]):'';
+    /* Accept either salted hash match or plain text match (for legacy/default passwords) */
+    if(!rows?.length||(storedPw!==hashedOld&&storedPw!==old)){msg.innerHTML='<span style="color:var(--red)">Wrong current password.</span>';return;}
+    /* Hash the new password (salted with staff ID) before storing — keeps both systems in sync */
+    const hashedNew=await hashPassword(np, uid);
+    await API.upd('staff','id=eq.'+encodeURIComponent(uid),{password:hashedNew});
     msg.innerHTML='<span style="color:var(--green)">✓ Password changed!</span>';
     $(prefix+'-old-pw').value='';$(prefix+'-new-pw').value='';$(prefix+'-conf-pw').value='';
     toast('Password updated');
