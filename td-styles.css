@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   THP-GHANA TRIPDESK v5 — Styles
+   THP-GHANA TRIPDESK v6 — Styles
    3-Stage Approval: Staff → Supervisor → Admin
 ═══════════════════════════════════════════════ */
 :root{
@@ -31,8 +31,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 .road-line{position:absolute;bottom:16px;left:0;right:0;height:3px;background:rgba(255,255,255,.15);border-radius:2px;}
 .road-line::before{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.3) 0,rgba(255,255,255,.3) 30px,transparent 30px,transparent 60px);}
 .vehicle-wrap{position:absolute;bottom:16px;animation:driveCar 8s linear infinite;}
-.vehicle-car{font-size:1.8rem;display:block;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4));}
-@keyframes driveCar{0%{left:-80px}100%{left:calc(100% + 80px)}}
+.vehicle-car{font-size:1.8rem;display:block;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4));transform:scaleX(-1);}
+@keyframes driveCar{0%{left:calc(100% + 80px)}100%{left:-80px}}
 #login-view{align-items:center;justify-content:center;min-height:100vh;position:relative;z-index:1;}
 #login-view.active{display:flex;}
 .login-card{background:rgba(255,255,255,.97);border-radius:20px;padding:2.2rem;width:92%;max-width:370px;box-shadow:0 24px 80px rgba(0,0,0,.3);text-align:center;position:relative;z-index:2;}
@@ -80,8 +80,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 .dash-vehicle-banner{background:linear-gradient(135deg,var(--dark),var(--purple));border-radius:14px;padding:1rem 1.2rem;margin-bottom:.8rem;position:relative;overflow:hidden;height:64px;display:flex;align-items:center;}
 .dvb-road{position:absolute;inset:0;overflow:hidden;}
 .dvb-road::after{content:'';position:absolute;bottom:8px;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.25) 0,rgba(255,255,255,.25) 20px,transparent 20px,transparent 40px);}
-.dvb-car{position:absolute;bottom:10px;font-size:1.6rem;animation:dashCar 6s linear infinite;filter:drop-shadow(0 2px 6px rgba(0,0,0,.4));}
-@keyframes dashCar{0%{left:-60px}100%{left:calc(100% + 60px)}}
+.dvb-car{position:absolute;bottom:10px;font-size:1.6rem;animation:dashCar 6s linear infinite;filter:drop-shadow(0 2px 6px rgba(0,0,0,.4));transform:scaleX(-1);}
+@keyframes dashCar{0%{left:calc(100% + 60px)}100%{left:-60px}}
 .dvb-label{position:relative;z-index:1;color:rgba(255,255,255,.9);font-size:.8rem;font-weight:600;}
 
 /* ── Cards ── */
