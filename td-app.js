@@ -1,12 +1,14 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v6
+   THP-GHANA TRIPDESK v7
+   · Assignment History for admin
+   · Supervisor/Admin requests bypass supervisor review
    · Password: SHA-256 hashed (matches Attendance system)
-   · Supervisor: full trip request + availability + my trips
    · Car animation: right → left
 ═══════════════════════════════════════════════════════════ */
 'use strict';
 const $=id=>document.getElementById(id);
 const fmt=iso=>{if(!iso)return'—';const d=new Date(iso);return isNaN(d)?iso:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});};
+const fmtTime=iso=>{if(!iso)return'';const d=new Date(iso);return isNaN(d)?'':d.toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});};
 const ini=s=>(s||'?').split(' ').slice(0,2).map(w=>(w[0]||'')).join('').toUpperCase();
 function toast(msg,type='ok'){const el=document.createElement('div');el.className='toast '+type;el.textContent=(type==='ok'?'✅ ':type==='info'?'ℹ️ ':'❌ ')+msg;$('toasts').appendChild(el);setTimeout(()=>el.remove(),3500);}
 function showLoader(msg){const el=$('loading-overlay');if(!el)return;if(msg)$('lo-text').textContent=msg;el.classList.remove('fade-out');el.classList.add('active');}
@@ -30,13 +32,7 @@ function generateStaffId(joinDateStr,existingIds=[]){
   let seq=2;while(existingIds.includes(`${base}-${seq}`))seq++;return`${base}-${seq}`;
 }
 
-/* ── Password hashing — SHA-256 ──────────────────────────────
-   The Attendance system stores passwords as SHA-256 hex hashes
-   (confirmed: 64-char hex strings in the `password` column).
-   TripDesk must hash the entered password the same way before
-   comparing or storing. Uses the browser's built-in SubtleCrypto
-   API — no external libraries needed.
-────────────────────────────────────────────────────────────── */
+/* ── Password hashing — SHA-256 ── */
 async function hashPassword(plain, staffId){
   const raw = staffId ? (staffId + ':' + String(plain).trim()) : String(plain).trim();
   const encoded=new TextEncoder().encode(raw);
@@ -95,7 +91,6 @@ class TripDesk{
     if(!id||!pass){err.textContent='Enter Staff ID and password.';return;}
     showLoader('Signing in…');
     try{
-      /* ── Admin login — check settings table ── */
       if(id==='ADMIN01'){
         const settings=await API.get('settings','key=eq.admin_password');
         const adminPass=(settings&&settings[0])?settings[0].value:'admin123';
@@ -106,14 +101,11 @@ class TripDesk{
         await this._hydrate();this._enter();
         return;
       }
-      /* ── Staff login ── */
       const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
       if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
       const s=rows[0];
-      /* Hash with staffId salt to match Attendance system: SHA-256(id + ':' + password) */
       const hashed=await hashPassword(pass, id);
       const storedPw=extractPw(s);
-      /* Accept salted hash match OR plain text match (for default/temp passwords) */
       if(storedPw!==hashed&&storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
       saveSession(id);
       this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
@@ -129,7 +121,6 @@ class TripDesk{
     if(!id){msg.innerHTML='<span style="color:var(--red)">Enter your Staff ID.</span>';return;}
     const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
     if(!rows||!rows.length){msg.innerHTML='<span style="color:var(--red)">Staff ID not found. Contact your admin.</span>';return;}
-    /* Store hashed '1234' (salted with staff ID) so it works in both systems */
     const hashed=await hashPassword('1234', id);
     await API.upd('staff','id=eq.'+encodeURIComponent(id),{password:hashed});
     msg.innerHTML='<span style="color:var(--green)">✓ Password reset to <strong>1234</strong>. Log in and change it immediately.</span>';
@@ -151,8 +142,9 @@ class TripDesk{
       purpose:t.purpose,stops:parseStops(t.stops),depDate:t.dep_date,retDate:t.ret_date,
       companions:t.companions||'',status:t.status||'pending',
       supervisorId:t.supervisor_id||'',supervisorName:t.supervisor_name||'',supervisorNote:t.supervisor_note||'',
-      driver:t.driver||'',driverId:t.driver_id||'',vehicle:t.vehicle||'',
-      color:t.color||'',staffEmail:t.staff_email||'',adminNote:t.admin_note||'',submitted:t.submitted
+      driver:t.driver||'',driverId:t.driver_id||'',vehicle:t.vehicle||'',vehicleId:t.vehicle_id||'',
+      color:t.color||'',staffEmail:t.staff_email||'',adminNote:t.admin_note||'',
+      submitted:t.submitted,updatedAt:t.updated_at||''
     }));
     this.vehicles=(veh||[]).map(v=>({id:v.id,plate:v.plate,make:v.make||'',status:v.status||'available'}));
     this.projects=(proj||[]).filter(p=>p.status==='active').map(p=>({id:p.id,name:p.name,code:p.code||'',desc:p.description||'',status:p.status}));
@@ -168,11 +160,15 @@ class TripDesk{
         const dn=$('ad-dash-name');if(dn)dn.textContent=this.user.name;
         this._populateUnitFilter();
         this.renderDash();this.renderAdminPending();this.renderAllTrips();
-        this.renderVehicles();this.renderProjects();this.renderStaff();this._renderAdminCal();
-      }else if(role==='supervisor'||role==='manager'||role==='country_leader'){
+        this.renderVehicles();this.renderProjects();this.renderStaff();
+        this._renderAdminCal();this.renderHistory();
+      }else if(isSupervisor(this.user)){
         this._showView('supervisor-view');
         $('sv-uname').textContent=this.user.name;
         const av=$('sv-av');if(av){av.textContent=ini(this.user.name);av.style.background=this.user.color;}
+        /* Supervisor requests skip supervisor review — hide supervisor selector, update description */
+        const svField=$('sv-supervisor-field');if(svField)svField.style.display='none';
+        const svDesc=$('sv-request-desc');if(svDesc)svDesc.textContent='Your request goes directly to admin for driver & vehicle assignment.';
         this._populateSvProjectsAndSupervisors();
         this._initStops('sv');
         this.renderSupervisorPending();
@@ -227,7 +223,6 @@ class TripDesk{
   _populateSvProjectsAndSupervisors(){
     const sel=$('sv-tr-project');
     if(sel)sel.innerHTML='<option value="">— Select project —</option>'+this.projects.map(p=>`<option value="${p.name}">${p.name}${p.code?' ('+p.code+')':''}</option>`).join('');
-    /* Supervisors can pick any OTHER supervisor to approve their request */
     const sv=$('sv-tr-supervisor');
     if(sv)sv.innerHTML='<option value="">— Select supervisor —</option>'+
       this.staff.filter(s=>isSupervisor(s)&&s.id!==this.user.id).map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
@@ -265,7 +260,6 @@ class TripDesk{
     this._updateSummary(prefix);
   }
   _renderStops(prefix){
-    const p=prefix==='st'?'':'sv-';
     const box=$(prefix==='st'?'stops-list':'sv-stops-list');if(!box)return;
     const arr=this._getStops(prefix);
     box.innerHTML=arr.map((s,i)=>`<div class="stop-card">
@@ -293,7 +287,12 @@ class TripDesk{
     box.style.display='block';
   }
 
-  /* ── SUBMIT TRIP (works for both staff prefix='st' and supervisor prefix='sv') ── */
+  /* ══════════════════════════════════════════════════
+     SUBMIT TRIP — handles both staff and supervisor
+     KEY CHANGE: Supervisors/managers bypass the
+     supervisor review stage. Their requests go
+     directly to admin (status: supervisor_approved).
+  ══════════════════════════════════════════════════ */
   async submitTrip(prefix){
     const isSv=prefix==='sv';
     const projectEl=$(isSv?'sv-tr-project':'tr-project');
@@ -304,10 +303,27 @@ class TripDesk{
     const clashEl=$(isSv?'sv-tr-clash':'tr-clash');
     errEl.textContent='';
 
-    const project=projectEl?.value,supervisorId=supervisorEl?.value,purpose=purposeEl?.value.trim(),companions=companionsEl?.value.trim();
+    const project=projectEl?.value,purpose=purposeEl?.value.trim(),companions=companionsEl?.value.trim();
     if(!project)return errEl.textContent='Select a project.';
-    if(!supervisorId)return errEl.textContent='Select a supervisor.';
     if(!purpose)return errEl.textContent='Describe the purpose.';
+
+    /* Supervisor/manager submitting → bypass supervisor stage entirely */
+    const userIsSupervisor=isSupervisor(this.user);
+    let supervisorId='',supervisorName='',supervisorEmail='';
+
+    if(userIsSupervisor){
+      /* No supervisor needed — goes straight to admin */
+      supervisorId=this.user.id;
+      supervisorName=this.user.name+' (self)';
+      supervisorEmail=this.user.email;
+    }else{
+      /* Regular staff — must select a supervisor */
+      supervisorId=supervisorEl?.value;
+      if(!supervisorId)return errEl.textContent='Select a supervisor.';
+      const supervisorObj=this.staff.find(s=>s.id===supervisorId);
+      supervisorName=supervisorObj?.name||'';
+      supervisorEmail=supervisorObj?.email||'';
+    }
 
     const arr=this._getStops(prefix);
     const stops=arr.map(s=>({from:(s.from||'').trim(),to:(s.to||'').trim(),depDate:s.dep,retDate:s.ret}));
@@ -328,36 +344,60 @@ class TripDesk{
     }
     clashEl.style.display='none';
 
-    const supervisorObj=this.staff.find(s=>s.id===supervisorId);
-    const supervisorName=supervisorObj?.name||'';
-    const supervisorEmail=supervisorObj?.email||'';
     const adminStaff=this.staff.find(s=>s.role==='admin');
+
+    /* Set initial status based on role */
+    const initialStatus=userIsSupervisor?'supervisor_approved':'pending';
 
     const id='TRIP'+Date.now();
     const trip={id,staff_id:this.user.id,officer:this.user.name,unit:this.user.unit,project,purpose,
-      stops:JSON.stringify(stops),dep_date:depDate,ret_date:retDate,companions,status:'pending',
+      stops:JSON.stringify(stops),dep_date:depDate,ret_date:retDate,companions,status:initialStatus,
       color:this.user.color,staff_email:this.user.email,supervisor_id:supervisorId,supervisor_name:supervisorName};
+
+    /* If supervisor, auto-set decided fields */
+    if(userIsSupervisor){
+      trip.supervisor_note='Auto-approved (supervisor self-request)';
+      trip.supervisor_decided_at=new Date().toISOString();
+    }
+
     showLoader('Submitting…');
     const r=await API.ins('trips',trip);
     hideLoader();
     if(!r){toast('Server error','err');return;}
 
     this.trips.unshift({id,staffId:this.user.id,officer:this.user.name,unit:this.user.unit,project,purpose,
-      stops,depDate,retDate,companions,status:'pending',color:this.user.color,
-      staffEmail:this.user.email,supervisorId,supervisorName,supervisorNote:'',
-      driver:'',vehicle:'',submitted:new Date().toISOString(),adminNote:''});
+      stops,depDate,retDate,companions,status:initialStatus,color:this.user.color,
+      staffEmail:this.user.email,supervisorId,supervisorName,
+      supervisorNote:userIsSupervisor?'Auto-approved (supervisor self-request)':'',
+      driver:'',driverId:'',vehicle:'',vehicleId:'',submitted:new Date().toISOString(),adminNote:'',updatedAt:''});
 
-    projectEl.value='';purposeEl.value='';companionsEl.value='';supervisorEl.value='';
+    projectEl.value='';purposeEl.value='';companionsEl.value='';
+    if(supervisorEl)supervisorEl.value='';
     this._initStops(prefix);
     $(isSv?'sv-tr-summary':'tr-summary').style.display='none';
     this.renderMyTrips(prefix);
-    toast('Trip submitted! Your supervisor will be notified.');
 
-    API.gasPost({action:'tripSubmitted',data:{
-      id,officer:this.user.name,unit:this.user.unit,project,purpose,
-      route:routeChain(stops),depDate,retDate,companions,
-      staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||''
-    }}).catch(()=>{});
+    if(userIsSupervisor){
+      /* Notify admin directly — trip is ready for assignment */
+      toast('Trip submitted! Goes directly to admin for assignment.');
+      API.gasPost({action:'adminAssigned',data:{
+        id,officer:this.user.name,unit:this.user.unit,project,purpose,
+        route:routeChain(stops),depDate,retDate,companions,
+        staffEmail:this.user.email,supervisorName,supervisorEmail,
+        adminEmail:adminStaff?.email||'',
+        status:'supervisor_approved',
+        supervisorNote:'Auto-approved (supervisor self-request)'
+      }}).catch(()=>{});
+      /* Also refresh supervisor views */
+      this.renderSupervisorAllTrips();
+    }else{
+      toast('Trip submitted! Your supervisor will be notified.');
+      API.gasPost({action:'tripSubmitted',data:{
+        id,officer:this.user.name,unit:this.user.unit,project,purpose,
+        route:routeChain(stops),depDate,retDate,companions,
+        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||''
+      }}).catch(()=>{});
+    }
   }
 
   /* ── MY TRIPS (staff + supervisor share same renderer) ── */
@@ -478,9 +518,9 @@ class TripDesk{
     $('ad-stats').innerHTML=`
       <div class="stat"><div class="stat-lbl">Total Trips</div><div class="stat-val" style="color:var(--purple)">${total}</div></div>
       <div class="stat"><div class="stat-lbl">With Supervisor</div><div class="stat-val" style="color:var(--gold)">${pend}</div></div>
-      <div class="stat"><div class="stat-lbl">Ready to Assign</div><div class="stat-val" style="color:#D97706">${svPend}</div></div>
+      <div class="stat"><div class="stat-lbl">Ready to Assign</div><div class="stat-val" style="color:var(--teal)">${svPend}</div></div>
       <div class="stat"><div class="stat-lbl">Approved</div><div class="stat-val" style="color:var(--green)">${appr}</div></div>
-      <div class="stat"><div class="stat-lbl">Vehicles</div><div class="stat-val" style="color:var(--teal)">${this.vehicles.length}</div></div>`;
+      <div class="stat"><div class="stat-lbl">Vehicles</div><div class="stat-val" style="color:#818cf8">${this.vehicles.length}</div></div>`;
     const body=$('ad-recent-body');
     body.innerHTML=this.trips.slice(0,8).map(t=>`<tr><td><strong>${t.officer}</strong></td><td>${routeChainHTML(parseStops(t.stops))}</td><td style="font-size:.7rem">${t.project||'—'}</td><td style="font-size:.7rem">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td>${this._badge(t.status)}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:1.5rem">No trips yet</td></tr>';
     const uMap={};this.trips.forEach(t=>{uMap[t.unit]=(uMap[t.unit]||0)+1;});
@@ -512,7 +552,6 @@ class TripDesk{
     $('tm-title').textContent='Assign: '+t.officer;
     $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}`;
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
-    // Populate driver dropdown — drivers + "Self-Driving" option for the requesting officer
     const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
     const selfDriveOpt=`<option value="SELF_${t.staffId}" style="font-weight:600">🚗 Self-Driving — ${t.officer}</option>`;
     $('tm-driver').innerHTML='<option value="">— Select driver —</option>'+driverOptions+`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
@@ -525,18 +564,18 @@ class TripDesk{
     const dId=$('tm-driver').value,vId=$('tm-vehicle').value,note=$('tm-note').value.trim();
     if(!dId)return toast('Select a driver','err');
     if(!vId)return toast('Select a vehicle','err');
-    // Handle self-driving — driver ID starts with "SELF_"
     const isSelfDrive=dId.startsWith('SELF_');
     const actualDriverId=isSelfDrive?dId.replace('SELF_',''):dId;
     const dName=isSelfDrive?(t.officer+' (Self-Driving)'):(this.staff.find(s=>s.id===dId)?.name||'');
     const dEmail=isSelfDrive?(t.staffEmail||''):(this.staff.find(s=>s.id===actualDriverId)?.email||'');
     const veh=this.vehicles.find(v=>v.id===vId);
     const vLabel=veh?veh.plate+' — '+(veh.make||''):'';
+    const now=new Date().toISOString();
     showLoader('Confirming…');
-    await API.upd('trips','id=eq.'+encodeURIComponent(id),{status:'approved',driver:dName,driver_id:actualDriverId,vehicle:vLabel,vehicle_id:vId,admin_note:note,updated_at:new Date().toISOString()});
-    t.status='approved';t.driver=dName;t.vehicle=vLabel;t.adminNote=note;
+    await API.upd('trips','id=eq.'+encodeURIComponent(id),{status:'approved',driver:dName,driver_id:actualDriverId,vehicle:vLabel,vehicle_id:vId,admin_note:note,updated_at:now});
+    t.status='approved';t.driver=dName;t.driverId=actualDriverId;t.vehicle=vLabel;t.vehicleId=vId;t.adminNote=note;t.updatedAt=now;
     hideLoader();closeModal('trip-modal');
-    this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();
+    this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
     toast('Trip approved & assigned ✓');
     const svObj=this.staff.find(s=>s.id===t.supervisorId);
     API.gasPost({action:'adminAssigned',data:{
@@ -544,6 +583,74 @@ class TripDesk{
       depDate:t.depDate,retDate:t.retDate,driver:dName,vehicle:vLabel,adminNote:note,
       staffEmail:t.staffEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?'':dEmail
     }}).catch(()=>{});
+  }
+
+  /* ══════════════════════════════════════════════════
+     ASSIGNMENT HISTORY — Full log + summary stats
+  ══════════════════════════════════════════════════ */
+  renderHistory(){
+    const statsEl=$('hist-stats');
+    const listEl=$('hist-list');
+    const countEl=$('hist-count');
+    if(!statsEl||!listEl)return;
+
+    /* Filter to approved trips only (these have assignments) */
+    let assigned=this.trips.filter(t=>t.status==='approved'&&t.driver);
+
+    /* Apply filters */
+    const mf=$('hist-month')?.value||'';
+    const sf=($('hist-search')?.value||'').toLowerCase();
+    if(mf){const[y,m]=mf.split('-').map(Number);assigned=assigned.filter(t=>{const d=new Date(t.depDate);return d.getFullYear()===y&&d.getMonth()===m-1;});}
+    if(sf)assigned=assigned.filter(t=>
+      t.officer.toLowerCase().includes(sf)||
+      t.driver.toLowerCase().includes(sf)||
+      t.vehicle.toLowerCase().includes(sf)||
+      (t.project||'').toLowerCase().includes(sf)
+    );
+
+    /* Sort by most recently assigned (updated_at or submitted) */
+    assigned.sort((a,b)=>(new Date(b.updatedAt||b.submitted))-(new Date(a.updatedAt||a.submitted)));
+
+    countEl.textContent=assigned.length;
+
+    /* Summary stats */
+    const totalAssigned=assigned.length;
+    const driverMap={};assigned.forEach(t=>{const d=t.driver||'—';driverMap[d]=(driverMap[d]||0)+1;});
+    const vehicleMap={};assigned.forEach(t=>{const v=t.vehicle||'—';vehicleMap[v]=(vehicleMap[v]||0)+1;});
+    const topDriver=Object.entries(driverMap).sort((a,b)=>b[1]-a[1])[0];
+    const topVehicle=Object.entries(vehicleMap).sort((a,b)=>b[1]-a[1])[0];
+    const uniqueDrivers=Object.keys(driverMap).length;
+    const uniqueVehicles=Object.keys(vehicleMap).length;
+
+    statsEl.innerHTML=`
+      <div class="hist-stat"><div class="hist-stat-lbl">Total Assignments</div><div class="hist-stat-val">${totalAssigned}</div></div>
+      <div class="hist-stat"><div class="hist-stat-lbl">Drivers Used</div><div class="hist-stat-val">${uniqueDrivers}</div></div>
+      <div class="hist-stat"><div class="hist-stat-lbl">Vehicles Used</div><div class="hist-stat-val">${uniqueVehicles}</div></div>
+      <div class="hist-stat"><div class="hist-stat-lbl">Busiest Driver</div><div class="hist-stat-val" style="font-size:.85rem">${topDriver?topDriver[0].split(' ')[0]:'—'}</div></div>
+      <div class="hist-stat"><div class="hist-stat-lbl">Most Used Vehicle</div><div class="hist-stat-val" style="font-size:.72rem">${topVehicle?topVehicle[0].split(' — ')[0]:'—'}</div></div>`;
+
+    /* Render history cards */
+    if(!assigned.length){
+      listEl.innerHTML='<div style="text-align:center;color:var(--text3);padding:2rem">No assignment history found.</div>';
+      return;
+    }
+    listEl.innerHTML=assigned.map(t=>{
+      const stops=parseStops(t.stops);
+      return`<div class="hist-card">
+        <div class="hist-card-main">
+          <div class="hist-officer">${t.officer} <span style="font-weight:400;color:var(--text2);font-size:.72rem">· ${t.unit}</span></div>
+          <div class="hist-route">${routeChain(stops)}</div>
+          <div class="hist-detail">
+            <strong>Project:</strong> ${t.project||'—'} · <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br>
+            <strong>Driver:</strong> <span class="hist-vehicle-tag">🚗 ${t.driver}</span>
+            <strong style="margin-left:.4rem">Vehicle:</strong> <span class="hist-vehicle-tag">🚘 ${t.vehicle||'—'}</span>
+            ${t.supervisorName?'<br><strong>Approved by:</strong> '+t.supervisorName:''}
+            ${t.adminNote?'<br><strong>Admin Note:</strong> <em>'+t.adminNote+'</em>':''}
+          </div>
+        </div>
+        <div class="hist-time">${fmtTime(t.updatedAt||t.submitted)}</div>
+      </div>`;
+    }).join('');
   }
 
   /* ── ADMIN — All Trips ── */
@@ -564,7 +671,7 @@ class TripDesk{
       <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button>`:`<button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button>`}</td>
     </tr>`;}).join('');
   }
-  async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();toast('Deleted');}
+  async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();this.renderHistory();toast('Deleted');}
   exportCSV(){
     let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Driver,Vehicle,Submitted\n';
     this.trips.forEach(t=>{csv+=`"${t.officer}","${t.unit}","${t.project||''}","${routeChain(parseStops(t.stops))}","${t.supervisorName||''}","${fmt(t.depDate)}","${fmt(t.retDate)}","${t.status}","${t.driver||''}","${t.vehicle||''}","${fmt(t.submitted)}"\n`;});
@@ -638,12 +745,9 @@ class TripDesk{
     if(np!==conf){msg.innerHTML='<span style="color:var(--red)">Passwords don\'t match.</span>';return;}
     const uid=this.user.id;
     const rows=await API.get('staff','id=eq.'+encodeURIComponent(uid));
-    /* Hash with staffId salt to match Attendance system */
     const hashedOld=await hashPassword(old, uid);
     const storedPw=rows?.length?extractPw(rows[0]):'';
-    /* Accept salted hash match OR plain text match (for default/temp passwords) */
     if(!rows?.length||(storedPw!==hashedOld&&storedPw!==old)){msg.innerHTML='<span style="color:var(--red)">Wrong current password.</span>';return;}
-    /* Hash the new password with staffId salt — keeps both systems in sync */
     const hashedNew=await hashPassword(np, uid);
     await API.upd('staff','id=eq.'+encodeURIComponent(uid),{password:hashedNew});
     msg.innerHTML='<span style="color:var(--green)">✓ Password changed!</span>';
@@ -656,21 +760,17 @@ class TripDesk{
   _svCalM=new Date().getMonth();_svCalY=new Date().getFullYear();
   _adCalM=new Date().getMonth();_adCalY=new Date().getFullYear();
 
-  /* Availability calendar — shared for staff (st) and supervisor (sv) */
   _renderCalendar(boxId,m,y){
     const box=$(boxId);if(!box)return;
     const isAdmin=boxId==='ad-calendar';
     const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
     const first=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate(),todayStr=new Date().toISOString().slice(0,10);
-
-    /* Nav buttons update the correct month/year vars */
     const prefix=boxId==='st-calendar'?'_stCal':boxId==='sv-calendar'?'_svCal':'_adCal';
     let h=`<div class="cal-nav">
       <button onclick="TD.${prefix}M--;if(TD.${prefix}M<0){TD.${prefix}M=11;TD.${prefix}Y--;}TD._renderCalendar('${boxId}',TD.${prefix}M,TD.${prefix}Y)">◀</button>
       <span>${MN[m]} ${y}</span>
       <button onclick="TD.${prefix}M++;if(TD.${prefix}M>11){TD.${prefix}M=0;TD.${prefix}Y++;}TD._renderCalendar('${boxId}',TD.${prefix}M,TD.${prefix}Y)">▶</button>
     </div>`;
-
     if(!isAdmin){
       h+=`<div class="cal-legend">
         <span class="leg-item"><span class="leg-dot" style="background:#16a34a"></span>Available</span>
@@ -678,7 +778,6 @@ class TripDesk{
         <span class="leg-item"><span class="leg-dot" style="background:#dc2626"></span>Fully Booked</span>
       </div>`;
     }
-
     h+='<div class="cal-grid">';
     ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{h+=`<div class="cal-hdr">${d}</div>`;});
     for(let i=0;i<first;i++)h+='<div class="cal-day" style="background:transparent;border:none"></div>';
@@ -692,7 +791,7 @@ class TripDesk{
         if(dayTrips.length>2)h+=`<span style="font-size:.5rem;color:var(--text3)">+${dayTrips.length-2}</span>`;
       }else{
         const bg=count>=MAX_CONCURRENT?'#fee2e2':count===1?'#fef9c3':(!isPast?'#dcfce7':'');
-        const borderCol=count>=MAX_CONCURRENT?'#dc2626':count===1?'#ca8a04':ds===todayStr?'var(--teal)':'var(--surf2)';
+        const borderCol=count>=MAX_CONCURRENT?'#dc2626':count===1?'#ca8a04':ds===todayStr?'var(--teal)':'var(--surf3)';
         const textCol=count>=MAX_CONCURRENT?'#991b1b':count===1?'#92400e':'inherit';
         h+=`<div class="cal-day" style="background:${bg};border-color:${borderCol}"><div class="cal-num" style="color:${textCol}">${d}</div>`;
         if(count>=MAX_CONCURRENT)h+=`<span style="font-size:.52rem;font-weight:800;color:#dc2626;display:block">FULL</span>`;
@@ -715,6 +814,11 @@ const TD=new TripDesk();
   const lv=$('login-view');if(lv)lv.style.display='none';
   const bg=document.querySelector('.login-bg');if(bg)bg.style.display='none';
   try{
+    if(s.id==='ADMIN01'){
+      TD.user={id:'ADMIN01',name:'Administrator',unit:'Admin',role:'admin',color:'#2D3592',email:''};
+      $('lo-text').textContent='Loading trip data…';await TD._hydrate();TD._enter();
+      return;
+    }
     const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
     if(!staff||!staff.length){clearSession();hideLoader();if(lv){lv.style.display='';lv.classList.add('active');}if(bg)bg.style.display='';return;}
     const u=staff[0];
