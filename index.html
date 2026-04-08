@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="td-styles.css?v=6">
+<link rel="stylesheet" href="td-styles.css?v=7">
 </head>
 <body>
 
@@ -28,7 +27,7 @@
     <div class="login-icon">🚗</div>
     <div class="login-title">TripDesk</div>
     <div class="login-sub">THP-Ghana Vehicle Request System</div>
-    <div class="lf"><label>Staff ID</label><input type="text" id="login-id" placeholder="e.g. THPG/01/2025" autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
+    <div class="lf"><label>Staff ID</label><input type="text" id="login-id" placeholder="e.g. THPG/01/2013" autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
     <div class="lf"><label>Password</label><div class="lf-pw"><input type="password" id="login-pass" placeholder="Enter password" onkeydown="if(event.key==='Enter')TD.login()"><button class="lf-eye" onclick="let i=$('login-pass');i.type=i.type==='password'?'text':'password'">👁</button></div></div>
     <div id="login-err" class="lf-err"></div>
     <button class="btn-primary" onclick="TD.login()"><span>Sign In</span></button>
@@ -108,10 +107,10 @@
     <div id="supervisor-request" class="tabpanel">
       <div class="card">
         <h3>📝 New Trip Request</h3>
-        <p class="card-sub">Submit your own trip request. Select another supervisor to review it.</p>
+        <p class="card-sub" id="sv-request-desc">Your request goes directly to admin for driver &amp; vehicle assignment.</p>
         <div class="form-grid">
           <div class="field"><label>Project <span class="req">*</span></label><select id="sv-tr-project"><option value="">— Select project —</option></select></div>
-          <div class="field"><label>Approving Supervisor <span class="req">*</span></label><select id="sv-tr-supervisor"><option value="">— Select supervisor —</option></select></div>
+          <div class="field" id="sv-supervisor-field" style="display:none"><label>Approving Supervisor <span class="req">*</span></label><select id="sv-tr-supervisor"><option value="">— Select supervisor —</option></select></div>
           <div class="field full"><label>Purpose <span class="req">*</span></label><textarea id="sv-tr-purpose" placeholder="Describe the purpose of the trip…"></textarea></div>
         </div>
         <div class="itin-section"><div class="itin-label">🗺 Itinerary <span class="req">*</span></div><div id="sv-stops-list"></div><button class="btn-add-stop" onclick="TD.addStop('sv')">+ Add Another Stop</button></div>
@@ -157,6 +156,7 @@
   <nav class="tabs" id="admin-tabs">
     <button class="tab active" onclick="TD.showTab('admin','dashboard',this)">📊 Dashboard</button>
     <button class="tab" onclick="TD.showTab('admin','pending',this)"><span id="ad-pending-badge" class="tab-badge"></span>🚗 Assign</button>
+    <button class="tab" onclick="TD.showTab('admin','history',this)">📜 History</button>
     <button class="tab" onclick="TD.showTab('admin','alltrips',this)">📋 All Trips</button>
     <button class="tab" onclick="TD.showTab('admin','calendar',this)">📅 Calendar</button>
     <button class="tab" onclick="TD.showTab('admin','vehicles',this)">🚘 Vehicles</button>
@@ -174,6 +174,21 @@
     </div>
     <div id="admin-pending" class="tabpanel">
       <div class="card"><h3>🚗 Assign Driver &amp; Vehicle</h3><p class="card-sub">Trips approved by supervisor — assign a driver and vehicle to complete the process.</p><div id="ad-pending-list"></div></div>
+    </div>
+    <!-- ═══ ASSIGNMENT HISTORY TAB ═══ -->
+    <div id="admin-history" class="tabpanel">
+      <div class="card">
+        <div class="card-hdr">
+          <h3>📜 Assignment History</h3>
+          <div class="card-tools">
+            <input class="fi" type="month" id="hist-month" onchange="TD.renderHistory()">
+            <input class="fi" id="hist-search" placeholder="Search officer / driver…" oninput="TD.renderHistory()" style="width:160px">
+          </div>
+        </div>
+        <div class="hist-stats" id="hist-stats"></div>
+        <div class="results-bar">Showing <strong id="hist-count">0</strong> assignments</div>
+        <div id="hist-list"></div>
+      </div>
     </div>
     <div id="admin-alltrips" class="tabpanel">
       <div class="card">
@@ -290,6 +305,6 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=6"></script>
+<script src="td-app.js?v=7"></script>
 </body>
 </html>
