@@ -657,6 +657,7 @@ class TripDesk{
           <div class="hist-route">${routeChain(stops)}</div>
           <div class="hist-detail">
             <strong>Project:</strong> ${t.project||'—'} · <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br>
+            <strong>Purpose:</strong> ${t.purpose||'—'}<br>
             <strong>Driver:</strong> <span class="hist-vehicle-tag">🚗 ${t.driver}</span>
             <strong style="margin-left:.4rem">Vehicle:</strong> <span class="hist-vehicle-tag">🚘 ${t.vehicle||'—'}</span>
             ${t.supervisorName?'<br><strong>Approved by:</strong> '+t.supervisorName:''}
