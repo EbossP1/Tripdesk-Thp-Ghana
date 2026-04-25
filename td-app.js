@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v7
+   THP-GHANA TRIPDESK v8
+   · Contract Drivers (separate table, linked at assignment)
    · Assignment History for admin
    · Supervisor/Admin requests bypass supervisor review
    · Password: SHA-256 hashed (matches Attendance system)
-   · Car animation: right → left
 ═══════════════════════════════════════════════════════════ */
 'use strict';
 const $=id=>document.getElementById(id);
@@ -80,7 +80,7 @@ function routeChainHTML(stops,cls=''){
 ════════════════════════════════════════════════════════════ */
 class TripDesk{
   constructor(){
-    this.user=null;this.staff=[];this.trips=[];this.vehicles=[];this.projects=[];
+    this.user=null;this.staff=[];this.trips=[];this.vehicles=[];this.projects=[];this.contractDrivers=[];
     this._stStops=[];this._svStops=[];
   }
 
@@ -130,11 +130,12 @@ class TripDesk{
 
   /* ── HYDRATE ── */
   async _hydrate(){
-    const[staff,trips,veh,proj]=await Promise.all([
+    const[staff,trips,veh,proj,cdrivers]=await Promise.all([
       API.get('staff','order=name'),
       API.get('trips','order=submitted.desc&limit=5000'),
       API.get('vehicles','order=plate'),
-      API.get('projects','order=name')
+      API.get('projects','order=name'),
+      API.get('contract_drivers','order=name')
     ]);
     this.staff=(staff||[]).map(s=>({id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''}));
     this.trips=(trips||[]).map(t=>({
@@ -148,6 +149,7 @@ class TripDesk{
     }));
     this.vehicles=(veh||[]).map(v=>({id:v.id,plate:v.plate,make:v.make||'',status:v.status||'available'}));
     this.projects=(proj||[]).filter(p=>p.status==='active').map(p=>({id:p.id,name:p.name,code:p.code||'',desc:p.description||'',status:p.status}));
+    this.contractDrivers=(cdrivers||[]).filter(d=>d.status==='active').map(d=>({id:d.id,name:d.name,phone:d.phone||'',license:d.license_no||'',email:d.email||'',status:d.status||'active'}));
   }
 
   /* ── ENTER (role routing) ── */
@@ -161,7 +163,7 @@ class TripDesk{
         this._populateUnitFilter();
         this.renderDash();this.renderAdminPending();this.renderAllTrips();
         this.renderVehicles();this.renderProjects();this.renderStaff();
-        this._renderAdminCal();this.renderHistory();
+        this._renderAdminCal();this.renderHistory();this.renderContractDrivers();
       }else if(isSupervisor(this.user)){
         this._showView('supervisor-view');
         $('sv-uname').textContent=this.user.name;
@@ -553,8 +555,12 @@ class TripDesk{
     $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}`;
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
     const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
+    const cdOptions=this.contractDrivers.map(d=>`<option value="CD_${d.id}">🚐 ${d.name} (${d.id})</option>`).join('');
     const selfDriveOpt=`<option value="SELF_${t.staffId}" style="font-weight:600">🚗 Self-Driving — ${t.officer}</option>`;
-    $('tm-driver').innerHTML='<option value="">— Select driver —</option>'+driverOptions+`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
+    $('tm-driver').innerHTML='<option value="">— Select driver —</option>'
+      +(driverOptions?`<optgroup label="── Staff Drivers ──">${driverOptions}</optgroup>`:'')
+      +(cdOptions?`<optgroup label="── Contract Drivers ──">${cdOptions}</optgroup>`:'')
+      +`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
     $('tm-vehicle').innerHTML='<option value="">— Select vehicle —</option>'+this.vehicles.map(v=>`<option value="${v.id}">${v.plate} — ${v.make}</option>`).join('');
     $('tm-note').value='';$('tm-id').value=id;$('trip-modal').classList.add('open');
   }
@@ -565,9 +571,18 @@ class TripDesk{
     if(!dId)return toast('Select a driver','err');
     if(!vId)return toast('Select a vehicle','err');
     const isSelfDrive=dId.startsWith('SELF_');
-    const actualDriverId=isSelfDrive?dId.replace('SELF_',''):dId;
-    const dName=isSelfDrive?(t.officer+' (Self-Driving)'):(this.staff.find(s=>s.id===dId)?.name||'');
-    const dEmail=isSelfDrive?(t.staffEmail||''):(this.staff.find(s=>s.id===actualDriverId)?.email||'');
+    const isContract=dId.startsWith('CD_');
+    const actualDriverId=isSelfDrive?dId.replace('SELF_',''):isContract?dId.replace('CD_',''):dId;
+    let dName='',dEmail='';
+    if(isSelfDrive){
+      dName=t.officer+' (Self-Driving)';dEmail=t.staffEmail||'';
+    }else if(isContract){
+      const cd=this.contractDrivers.find(d=>d.id===actualDriverId);
+      dName=(cd?.name||'')+'  (Contract)';dEmail=cd?.email||'';
+    }else{
+      const staffD=this.staff.find(s=>s.id===dId);
+      dName=staffD?.name||'';dEmail=staffD?.email||'';
+    }
     const veh=this.vehicles.find(v=>v.id===vId);
     const vLabel=veh?veh.plate+' — '+(veh.make||''):'';
     const now=new Date().toISOString();
@@ -753,6 +768,84 @@ class TripDesk{
     msg.innerHTML='<span style="color:var(--green)">✓ Password changed!</span>';
     $(prefix+'-old-pw').value='';$(prefix+'-new-pw').value='';$(prefix+'-conf-pw').value='';
     toast('Password updated');
+  }
+
+  /* ══════════════════════════════════════════════════
+     CONTRACT DRIVERS — CRUD
+  ══════════════════════════════════════════════════ */
+  _nextCdId(){
+    const existing=this.contractDrivers.map(d=>d.id);
+    let seq=1;
+    while(existing.includes(`CD/${String(seq).padStart(3,'0')}`))seq++;
+    return`CD/${String(seq).padStart(3,'0')}`;
+  }
+  previewCdId(){const idField=$('cd-id');if(idField&&!idField.value)idField.value=this._nextCdId();}
+  toggleAddCdForm(){const form=$('add-cd-form'),btn=$('add-cd-toggle');if(!form)return;const open=form.style.display==='block';form.style.display=open?'none':'block';if(btn)btn.textContent=open?'+ Add Driver':'▲ Close';}
+  clearCdForm(){['cd-name','cd-id','cd-phone','cd-license','cd-email'].forEach(id=>{const el=$(id);if(el)el.value='';});const m=$('cd-msg');if(m)m.textContent='';const h=$('cd-id-hint');if(h)h.textContent='Leave blank for auto-generated ID';}
+
+  async addContractDriver(){
+    const msg=$('cd-msg');if(msg)msg.textContent='';
+    const name=$('cd-name')?.value.trim();
+    let idVal=$('cd-id')?.value.trim().toUpperCase();
+    const phone=$('cd-phone')?.value.trim();
+    const license=$('cd-license')?.value.trim().toUpperCase();
+    const email=$('cd-email')?.value.trim();
+    if(!name){if(msg)msg.innerHTML='<span style="color:var(--red)">Name required.</span>';return;}
+    if(!phone){if(msg)msg.innerHTML='<span style="color:var(--red)">Phone number required.</span>';return;}
+    if(!license){if(msg)msg.innerHTML='<span style="color:var(--red)">License number required.</span>';return;}
+    if(!idVal)idVal=this._nextCdId();
+    if(this.contractDrivers.find(d=>d.id===idVal)){if(msg)msg.innerHTML=`<span style="color:var(--red)">ID <strong>${idVal}</strong> already exists.</span>`;return;}
+    showLoader('Adding contract driver…');
+    const r=await API.ins('contract_drivers',{id:idVal,name,phone,license_no:license,email:email||'',status:'active'});
+    hideLoader();
+    if(!r){toast('Failed to add','err');return;}
+    this.contractDrivers.push({id:idVal,name,phone,license,email:email||'',status:'active'});
+    this.contractDrivers.sort((a,b)=>a.name.localeCompare(b.name));
+    if(msg)msg.innerHTML=`<span style="color:var(--green)">✓ <strong>${name}</strong> added as <strong>${idVal}</strong>.</span>`;
+    this.clearCdForm();$('add-cd-form').style.display='none';$('add-cd-toggle').textContent='+ Add Driver';
+    this.renderContractDrivers();
+    toast(`${name} (${idVal}) added ✓`);
+  }
+
+  renderContractDrivers(){
+    const g=$('ad-cd-grid');if(!g)return;
+    const search=($('cd-search')?.value||'').toLowerCase();
+    let list=this.contractDrivers.slice();
+    if(search)list=list.filter(d=>d.name.toLowerCase().includes(search)||d.id.toLowerCase().includes(search)||d.phone.includes(search));
+    if(!list.length){g.innerHTML='<div style="color:var(--text3);font-size:.8rem;padding:1rem;grid-column:1/-1;text-align:center">No contract drivers found. Add one above.</div>';return;}
+    g.innerHTML=list.map(d=>`<div class="cd-card">
+      <div class="cd-card-top"><div class="av" style="background:var(--gold)">${ini(d.name)}</div><div><div class="cd-name">${d.name}</div><div class="cd-id">${d.id}</div></div></div>
+      <div class="cd-detail">
+        <strong>📞</strong> ${d.phone||'—'}<br>
+        <strong>🪪</strong> ${d.license||'—'}
+        ${d.email?'<br><strong>✉</strong> '+d.email:''}
+      </div>
+      <div style="display:flex;gap:.3rem;align-items:center">
+        <span class="cd-badge">Contract</span>
+        <span style="flex:1"></span>
+        <button class="btn-sm btn-outline" onclick="TD.toggleCdStatus('${d.id}')">${d.status==='active'?'⏸ Deactivate':'▶ Activate'}</button>
+        <button class="btn-sm btn-red" onclick="TD.removeContractDriver('${d.id}','${d.name.replace(/'/g,'')}')">🗑</button>
+      </div>
+    </div>`).join('');
+  }
+
+  async toggleCdStatus(id){
+    const d=this.contractDrivers.find(x=>x.id===id);if(!d)return;
+    const ns=d.status==='active'?'inactive':'active';
+    await API.upd('contract_drivers','id=eq.'+encodeURIComponent(id),{status:ns});
+    if(ns==='inactive'){this.contractDrivers=this.contractDrivers.filter(x=>x.id!==id);}
+    else{d.status=ns;}
+    this.renderContractDrivers();toast(ns==='active'?'Driver activated':'Driver deactivated');
+  }
+
+  async removeContractDriver(id,name){
+    if(!confirm(`Remove contract driver ${name} (${id})?\nTrip assignment history is preserved.`))return;
+    showLoader('Removing…');
+    await API.del('contract_drivers','id=eq.'+encodeURIComponent(id));
+    hideLoader();
+    this.contractDrivers=this.contractDrivers.filter(d=>d.id!==id);
+    this.renderContractDrivers();
+    toast(`${name} removed`);
   }
 
   /* ── CALENDARS ── */
