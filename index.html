@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
-<link rel="stylesheet" href="td-styles.css?v=7">
+<link rel="stylesheet" href="td-styles.css?v=8">
 </head>
 <body>
 
@@ -160,6 +160,7 @@
     <button class="tab" onclick="TD.showTab('admin','alltrips',this)">📋 All Trips</button>
     <button class="tab" onclick="TD.showTab('admin','calendar',this)">📅 Calendar</button>
     <button class="tab" onclick="TD.showTab('admin','vehicles',this)">🚘 Vehicles</button>
+    <button class="tab" onclick="TD.showTab('admin','cdrivers',this)">🚐 Contract Drivers</button>
     <button class="tab" onclick="TD.showTab('admin','projects',this)">📂 Projects</button>
     <button class="tab" onclick="TD.showTab('admin','staff',this)">👥 Staff</button>
   </nav>
@@ -209,6 +210,38 @@
       <div class="card"><h3>🚘 Fleet Management</h3>
         <div class="add-row"><input id="v-plate" placeholder="Plate number" class="fi" style="width:140px" oninput="this.value=this.value.toUpperCase()"><input id="v-make" placeholder="Make / Model" class="fi" style="width:160px"><button class="btn-sm btn-teal" onclick="TD.addVehicle()">+ Add</button></div>
         <div class="scr"><table><thead><tr><th>Plate</th><th>Make</th><th>Status</th><th>Action</th></tr></thead><tbody id="ad-veh-body"></tbody></table></div>
+      </div>
+    </div>
+    <!-- ═══ CONTRACT DRIVERS TAB ═══ -->
+    <div id="admin-cdrivers" class="tabpanel">
+      <div class="card" id="add-cd-card">
+        <div class="card-hdr"><h3>🚐 Contract Drivers</h3><button class="btn-sm btn-outline" onclick="TD.toggleAddCdForm()" id="add-cd-toggle">+ Add Driver</button></div>
+        <p class="card-sub">External contract drivers available for trip assignments. Separate from THP Ghana staff.</p>
+        <div id="add-cd-form" style="display:none">
+          <div class="form-grid">
+            <div class="field"><label>Full Name <span class="req">*</span></label><input id="cd-name" placeholder="e.g. Kwame Mensah" autocomplete="off"></div>
+            <div class="field"><label>Driver ID</label>
+              <div style="display:flex;gap:.4rem;align-items:center"><input id="cd-id" placeholder="Auto: CD/001" oninput="this.value=this.value.toUpperCase()" style="flex:1"><button class="btn-sm btn-outline" onclick="TD.previewCdId()">↺</button></div>
+              <span id="cd-id-hint" style="font-size:.6rem;color:var(--gold);margin-top:.15rem;display:block;font-style:italic">Leave blank for auto-generated ID</span>
+            </div>
+            <div class="field"><label>Phone <span class="req">*</span></label><input id="cd-phone" placeholder="e.g. 024 123 4567" type="tel"></div>
+            <div class="field"><label>License Number <span class="req">*</span></label><input id="cd-license" placeholder="e.g. DL-123456" oninput="this.value=this.value.toUpperCase()"></div>
+            <div class="field full"><label>Email <span class="opt">(optional)</span></label><input id="cd-email" type="email" placeholder="driver@email.com"></div>
+          </div>
+          <div id="cd-msg" class="form-msg"></div>
+          <div style="display:flex;gap:.5rem;margin-top:.3rem">
+            <button class="btn-primary" style="max-width:200px" onclick="TD.addContractDriver()">+ Add Contract Driver</button>
+            <button class="btn-sm btn-outline" onclick="TD.clearCdForm()">Clear</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hdr"><h3>📋 Driver Registry</h3>
+          <div class="card-tools">
+            <input class="fi" id="cd-search" placeholder="Search name / ID…" oninput="TD.renderContractDrivers()" style="width:160px">
+          </div>
+        </div>
+        <div class="cd-grid" id="ad-cd-grid"></div>
       </div>
     </div>
     <div id="admin-projects" class="tabpanel">
@@ -305,6 +338,6 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=7"></script>
+<script src="td-app.js?v=8"></script>
 </body>
 </html>
