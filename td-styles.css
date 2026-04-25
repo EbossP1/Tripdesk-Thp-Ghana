@@ -253,6 +253,17 @@ tr:hover td{background:rgba(45,53,146,.02);}
 .hist-time{font-size:.6rem;color:var(--text3);text-align:right;white-space:nowrap;font-weight:500;}
 .hist-vehicle-tag{display:inline-flex;align-items:center;gap:3px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-size:.62rem;font-weight:600;color:var(--purple);}
 
+/* ═══ CONTRACT DRIVERS ═══ */
+.cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem;margin-top:.6rem;}
+.cd-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.8rem;transition:all .2s;border-left:3px solid var(--gold);}
+.cd-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);}
+.cd-card-top{display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem;}
+.cd-card .cd-name{font-weight:700;font-size:.78rem;color:var(--dark);}
+.cd-card .cd-id{font-size:.58rem;font-family:monospace;color:var(--gold);font-weight:600;}
+.cd-card .cd-detail{font-size:.64rem;color:var(--text2);line-height:1.6;margin-bottom:.3rem;}
+.cd-card .cd-detail strong{color:var(--text);}
+.cd-badge{display:inline-flex;align-items:center;gap:3px;background:#FFF7ED;border:1px solid #FED7AA66;border-radius:20px;padding:2px 7px;font-size:.55rem;font-weight:700;color:#9A3412;letter-spacing:.2px;}
+
 /* ═══ TOASTS ═══ */
 #toasts{position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:.3rem;}
 .toast{padding:.55rem .9rem;border-radius:10px;font-size:.76rem;font-weight:500;animation:fadeUp .3s;box-shadow:var(--shadow-md);backdrop-filter:blur(8px);}
