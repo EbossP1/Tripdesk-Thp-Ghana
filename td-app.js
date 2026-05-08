@@ -684,7 +684,7 @@ class TripDesk{
       <td>${routeChainHTML(stops)}</td><td style="font-size:.68rem">${t.supervisorName||'—'}</td>
       <td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td>
       <td>${this._badge(t.status)}</td><td style="font-size:.68rem">${t.driver||'—'}</td><td style="font-size:.68rem">${t.vehicle||'—'}</td>
-      <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button>`:`<button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button>`}</td>
+      <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
     </tr>`;}).join('');
   }
   async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();this.renderHistory();toast('Deleted');}
