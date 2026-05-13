@@ -459,7 +459,7 @@ class TripDesk{
       const stopsHTML=stops.length?`<div class="pend-stops">${stops.map((s,i)=>`<div class="pend-stop"><strong>${i+1}.</strong> ${s.from||'—'} <span class="pend-stop-arrow">→</span> ${s.to||'—'} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)} → ${fmt(s.retDate)})</span></div>`).join('')}</div>`:'';
       return`<div class="pend-card">
         <h4>${t.officer} <span style="font-weight:400;color:var(--text2)">· ${t.unit}</span></h4>
-        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}${t.companions?' · <strong>With:</strong> '+t.companions:''}</div>
+        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
         <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openSupervisorModal('${t.id}')">👁 Review &amp; Decide</button></div>
       </div>`;
@@ -524,7 +524,7 @@ class TripDesk{
       <div class="stat"><div class="stat-lbl">Approved</div><div class="stat-val" style="color:var(--green)">${appr}</div></div>
       <div class="stat"><div class="stat-lbl">Vehicles</div><div class="stat-val" style="color:#818cf8">${this.vehicles.length}</div></div>`;
     const body=$('ad-recent-body');
-    body.innerHTML=this.trips.slice(0,8).map(t=>`<tr><td><strong>${t.officer}</strong></td><td>${routeChainHTML(parseStops(t.stops))}</td><td style="font-size:.7rem">${t.project||'—'}</td><td style="font-size:.7rem">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td>${this._badge(t.status)}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:1.5rem">No trips yet</td></tr>';
+    body.innerHTML=this.trips.slice(0,8).map(t=>`<tr><td><strong>${t.officer}</strong></td><td>${routeChainHTML(parseStops(t.stops))}</td><td style="font-size:.7rem">${t.project||'—'}</td><td style="font-size:.7rem">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td style="font-size:.66rem;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td><td>${this._badge(t.status)}</td></tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:1.5rem">No trips yet</td></tr>';
     const uMap={};this.trips.forEach(t=>{uMap[t.unit]=(uMap[t.unit]||0)+1;});
     const uArr=Object.entries(uMap).sort((a,b)=>b[1]-a[1]);const mx=uArr.length?uArr[0][1]:1;
     $('ad-unit-chart').innerHTML=uArr.length?uArr.map(([u,c])=>`<div class="unit-bar"><div class="unit-bar-label"><span>${u}</span><strong>${c}</strong></div><div class="unit-bar-track"><div class="unit-bar-fill" style="width:${Math.round(c/mx*100)}%"></div></div></div>`).join(''):'<div style="color:var(--text3);font-size:.75rem;text-align:center;padding:1rem">No data</div>';
@@ -541,7 +541,7 @@ class TripDesk{
       const stopsHTML=stops.length?`<div class="pend-stops">${stops.map((s,i)=>`<div class="pend-stop"><strong>${i+1}.</strong> ${s.from||'—'} <span class="pend-stop-arrow">→</span> ${s.to||'—'} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)} → ${fmt(s.retDate)})</span></div>`).join('')}</div>`:'';
       return`<div class="pend-card" style="border-left-color:var(--teal)">
         <h4>${t.officer}: ${routeChain(stops)}</h4>
-        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}</div>
+        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
         <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">🚗 Assign Driver &amp; Vehicle</button></div>
       </div>`;
@@ -552,7 +552,7 @@ class TripDesk{
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
     const stops=parseStops(t.stops);
     $('tm-title').textContent='Assign: '+t.officer;
-    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}`;
+    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`;
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
     const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
     const cdOptions=this.contractDrivers.map(d=>`<option value="CD_${d.id}">🚐 ${d.name} (${d.id})</option>`).join('');
@@ -678,10 +678,11 @@ class TripDesk{
     if(uf)list=list.filter(t=>t.unit===uf);
     if(mf){const[y,m]=mf.split('-').map(Number);list=list.filter(t=>{const d=new Date(t.depDate);return d.getFullYear()===y&&d.getMonth()===m-1;});}
     $('ad-trip-count').textContent=list.length;
-    if(!list.length){body.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:1.5rem">No trips match</td></tr>';return;}
+    if(!list.length){body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:1.5rem">No trips match</td></tr>';return;}
     body.innerHTML=list.map(t=>{const stops=parseStops(t.stops);return`<tr>
       <td><strong>${t.officer}</strong></td><td style="font-size:.68rem">${t.unit}</td><td style="font-size:.68rem">${t.project||'—'}</td>
       <td>${routeChainHTML(stops)}</td><td style="font-size:.68rem">${t.supervisorName||'—'}</td>
+      <td style="font-size:.66rem;white-space:nowrap;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td>
       <td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td>
       <td>${this._badge(t.status)}</td><td style="font-size:.68rem">${t.driver||'—'}</td><td style="font-size:.68rem">${t.vehicle||'—'}</td>
       <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
