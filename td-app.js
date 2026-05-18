@@ -17,6 +17,7 @@ function closeModal(id){$(id).classList.remove('open');}
 
 const SUPA={URL:'https://jhpqzkwzxprsnaczkyjq.supabase.co',KEY:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocHF6a3d6eHByc25hY3preWpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxOTE4NTMsImV4cCI6MjA4OTc2Nzg1M30.GKJz9EhxGP1wTQBiufLoVLxWOstx-9Z0MPWHxj2c8VM'};
 const GAS_URL='https://script.google.com/macros/s/AKfycby1gAE6dkwroOS6IZ_ODXf2c7E41mVLJJG62TBUolp9jLw2TJp7Attw2uakYidZHZNL/exec';
+const ADMIN_EMAIL='eric.koomson@thp.org';
 const MAX_CONCURRENT=3;
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
@@ -382,12 +383,11 @@ class TripDesk{
     if(userIsSupervisor){
       /* Notify admin directly — trip is ready for assignment */
       toast('Trip submitted! Goes directly to admin for assignment.');
-      API.gasPost({action:'adminAssigned',data:{
-        id,officer:this.user.name,unit:this.user.unit,project,purpose,
-        route:routeChain(stops),depDate,retDate,companions,
+      API.gasPost({action:'supervisorDecision',data:{
+        id,status:'supervisor_approved',officer:this.user.name,unit:this.user.unit,
+        project,purpose,route:routeChain(stops),depDate,retDate,companions,
         staffEmail:this.user.email,supervisorName,supervisorEmail,
-        adminEmail:adminStaff?.email||'',
-        status:'supervisor_approved',
+        adminEmail:adminStaff?.email||ADMIN_EMAIL,
         supervisorNote:'Auto-approved (supervisor self-request)'
       }}).catch(()=>{});
       /* Also refresh supervisor views */
@@ -397,7 +397,7 @@ class TripDesk{
       API.gasPost({action:'tripSubmitted',data:{
         id,officer:this.user.name,unit:this.user.unit,project,purpose,
         route:routeChain(stops),depDate,retDate,companions,
-        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||''
+        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL
       }}).catch(()=>{});
     }
   }
@@ -489,7 +489,7 @@ class TripDesk{
       id,status:newStatus,supervisorNote:note,officer:t.officer,
       route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,staffEmail:t.staffEmail,
-      supervisorName:this.user.name,supervisorEmail:this.user.email,adminEmail:adminStaff?.email||''
+      supervisorName:this.user.name,supervisorEmail:this.user.email,adminEmail:adminStaff?.email||ADMIN_EMAIL
     }}).catch(()=>{});
   }
 
