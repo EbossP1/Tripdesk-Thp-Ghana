@@ -877,7 +877,7 @@ class TripDesk{
     if(!isAdmin){
       h+=`<div class="cal-legend">
         <span class="leg-item"><span class="leg-dot" style="background:#16a34a"></span>Available</span>
-        <span class="leg-item"><span class="leg-dot" style="background:#ca8a04"></span>1 Trip</span>
+        <span class="leg-item"><span class="leg-dot" style="background:#ca8a04"></span>1–2 Booked</span>
         <span class="leg-item"><span class="leg-dot" style="background:#dc2626"></span>Fully Booked</span>
       </div>`;
     }
@@ -893,12 +893,17 @@ class TripDesk{
         dayTrips.slice(0,2).forEach(t=>{h+=`<span class="cal-trip" style="background:${t.color||'var(--purple)'}" title="${t.officer}: ${routeChain(parseStops(t.stops))}">${t.officer.split(' ')[0]}</span>`;});
         if(dayTrips.length>2)h+=`<span style="font-size:.5rem;color:var(--text3)">+${dayTrips.length-2}</span>`;
       }else{
-        const bg=count>=MAX_CONCURRENT?'#fee2e2':count===1?'#fef9c3':(!isPast?'#dcfce7':'');
-        const borderCol=count>=MAX_CONCURRENT?'#dc2626':count===1?'#ca8a04':ds===todayStr?'var(--teal)':'var(--surf3)';
-        const textCol=count>=MAX_CONCURRENT?'#991b1b':count===1?'#92400e':'inherit';
+        const isFull=count>=MAX_CONCURRENT;
+        const bg=isFull?'#fee2e2':count===2?'#fef3c7':count===1?'#fef9c3':(!isPast?'#dcfce7':'');
+        const borderCol=isFull?'#dc2626':count===2?'#d97706':count===1?'#ca8a04':ds===todayStr?'var(--teal)':'var(--surf3)';
+        const textCol=isFull?'#991b1b':count===2?'#92400e':count===1?'#92400e':'inherit';
         h+=`<div class="cal-day" style="background:${bg};border-color:${borderCol}"><div class="cal-num" style="color:${textCol}">${d}</div>`;
-        if(count>=MAX_CONCURRENT)h+=`<span style="font-size:.52rem;font-weight:800;color:#dc2626;display:block">FULL</span>`;
-        else if(count===1)h+=`<span style="font-size:.5rem;color:#92400e">${dayTrips[0].officer.split(' ')[0]}</span>`;
+        if(isFull){
+          h+=`<span style="font-size:.52rem;font-weight:800;color:#dc2626;display:block">FULL</span>`;
+          dayTrips.forEach(t=>{h+=`<span style="font-size:.48rem;color:#7f1d1d;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${t.officer}">${t.officer.split(' ')[0]}</span>`;});
+        }else if(count>0){
+          dayTrips.forEach(t=>{h+=`<span style="font-size:.48rem;color:#92400e;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${t.officer}">${t.officer.split(' ')[0]}</span>`;});
+        }
       }
       h+='</div>';
     }
