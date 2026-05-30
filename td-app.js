@@ -340,10 +340,18 @@ class TripDesk{
       if(i>0&&new Date(s.depDate)<new Date(stops[i-1].retDate))return errEl.textContent=`Stop ${i+1}: Departure can't be before previous return.`;
     }
     const depDate=stops[0].depDate,retDate=stops[stops.length-1].retDate;
-    const clashes=this.trips.filter(b=>b.status!=='rejected'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
-    if(clashes.length>=MAX_CONCURRENT){
-      clashEl.innerHTML='⚠ <strong>Schedule conflict:</strong> '+clashes.length+' trips overlap. Max '+MAX_CONCURRENT+' concurrent.';
-      clashEl.style.display='block';return errEl.textContent='Too many overlapping trips.';
+    /* Check peak daily concurrency across the requested range, not total overlapping trips */
+    const overlapping=this.trips.filter(b=>b.status!=='rejected'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
+    let peakDay='',peakCount=0;
+    const startMs=new Date(depDate).getTime(),endMs=new Date(retDate).getTime();
+    for(let d=startMs;d<=endMs;d+=86400000){
+      const ds=new Date(d).toISOString().slice(0,10);
+      const dayCount=overlapping.filter(b=>ds>=b.depDate&&ds<=b.retDate).length;
+      if(dayCount>peakCount){peakCount=dayCount;peakDay=ds;}
+    }
+    if(peakCount>=MAX_CONCURRENT){
+      clashEl.innerHTML='⚠ <strong>Schedule conflict on '+fmt(peakDay)+':</strong> '+peakCount+' trips already overlap that day. Max '+MAX_CONCURRENT+' concurrent (one per driver).';
+      clashEl.style.display='block';return errEl.textContent='Too many overlapping trips on '+fmt(peakDay)+'.';
     }
     clashEl.style.display='none';
 
