@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
-<link rel="stylesheet" href="td-styles.css?v=8">
+<link rel="stylesheet" href="td-styles.css?v=9">
 </head>
 <body>
 
@@ -142,6 +142,35 @@
         <div class="field"><label>Confirm Password</label><input type="password" id="sv-conf-pw"></div>
         <div id="sv-pw-msg" class="form-msg"></div>
         <button class="btn-primary" onclick="TD.changePass('sv')">Update Password</button>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ═══ CONTRACT DRIVER VIEW ═══ -->
+<section id="cdriver-view" class="view">
+  <header class="topbar">
+    <div class="tb-left"><span class="tb-logo">🚐</span><span class="tb-brand">TripDesk <small>Driver</small></span></div>
+    <div class="tb-right"><div class="tb-user"><div class="av av-sm" style="background:#F5A623" id="cd-av">D</div><span id="cd-uname">Driver</span></div><button class="btn-sm btn-outline" onclick="TD.logout()">Sign Out</button></div>
+  </header>
+  <nav class="tabs" id="cdriver-tabs">
+    <button class="tab active" onclick="TD.showTab('cdriver','trips',this);TD.renderDriverTrips()">🚗 My Trips</button>
+    <button class="tab" onclick="TD.showTab('cdriver','chpw',this)">🔑 Password</button>
+  </nav>
+  <main class="main-content">
+    <div id="cdriver-trips" class="tabpanel active">
+      <div class="dash-vehicle-banner"><div class="dvb-road"><div class="dvb-car">🚗</div></div><div class="dvb-label">Welcome, <span id="cd-welcome-name">Driver</span> · <span id="cd-summary">No trips yet</span></div></div>
+      <div id="cd-trips-cards"></div>
+    </div>
+    <div id="cdriver-chpw" class="tabpanel">
+      <div class="card" style="max-width:420px">
+        <h3>🔑 Change Password</h3>
+        <p class="card-sub">If this is your first login, your current password is <strong>1234</strong>. Please change it now.</p>
+        <div class="field"><label>Current Password</label><input type="password" id="cd-old-pw"></div>
+        <div class="field"><label>New Password</label><input type="password" id="cd-new-pw" placeholder="At least 4 characters"></div>
+        <div class="field"><label>Confirm Password</label><input type="password" id="cd-conf-pw"></div>
+        <div id="cd-pw-msg" class="form-msg"></div>
+        <button class="btn-primary" onclick="TD.changeDriverPass()">Update Password</button>
       </div>
     </div>
   </main>
@@ -338,6 +367,6 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=8"></script>
+<script src="td-app.js?v=9"></script>
 </body>
 </html>
