@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v8
+   THP-GHANA TRIPDESK v9
+   · Contract Drivers can log in to view their assigned trips
    · Contract Drivers (separate table, linked at assignment)
    · Assignment History for admin
    · Supervisor/Admin requests bypass supervisor review
@@ -102,6 +103,23 @@ class TripDesk{
         await this._hydrate();this._enter();
         return;
       }
+      /* Contract driver login — CD/ prefix routes to contract_drivers table */
+      if(id.startsWith('CD/')){
+        const cdrows=await API.get('contract_drivers','id=eq.'+encodeURIComponent(id));
+        if(!cdrows||!cdrows.length){hideLoader();err.textContent='Driver ID not found.';return;}
+        const cd=cdrows[0];
+        if(cd.status!=='active'){hideLoader();err.textContent='Account inactive. Contact admin.';return;}
+        const hashed=await hashPassword(pass,id);
+        const storedPw=extractPw(cd);
+        /* First-time login: no password set → accept default '1234' */
+        const firstTimeOk=!storedPw&&pass==='1234';
+        if(!firstTimeOk&&storedPw!==hashed&&storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
+        saveSession(id);
+        this.user={id:cd.id,name:cd.name,unit:'Contract Driver',role:'contract_driver',color:'#F5A623',email:cd.email||'',phone:cd.phone||'',license:cd.license_no||''};
+        $('lo-text').textContent='Loading your trips…';
+        await this._hydrate();this._enter();
+        return;
+      }
       const rows=await API.get('staff','id=eq.'+encodeURIComponent(id));
       if(!rows||!rows.length){hideLoader();err.textContent='Staff ID not found.';return;}
       const s=rows[0];
@@ -165,6 +183,12 @@ class TripDesk{
         this.renderDash();this.renderAdminPending();this.renderAllTrips();
         this.renderVehicles();this.renderProjects();this.renderStaff();
         this._renderAdminCal();this.renderHistory();this.renderContractDrivers();
+      }else if(role==='contract_driver'){
+        this._showView('cdriver-view');
+        $('cd-uname').textContent=this.user.name;
+        const wn=$('cd-welcome-name');if(wn)wn.textContent=this.user.name;
+        const av=$('cd-av');if(av){av.textContent=ini(this.user.name);}
+        this.renderDriverTrips();
       }else if(isSupervisor(this.user)){
         this._showView('supervisor-view');
         $('sv-uname').textContent=this.user.name;
@@ -609,6 +633,70 @@ class TripDesk{
   }
 
   /* ══════════════════════════════════════════════════
+     CONTRACT DRIVER DASHBOARD — Their assigned trips
+  ══════════════════════════════════════════════════ */
+  renderDriverTrips(){
+    const box=$('cd-trips-cards');if(!box)return;
+    /* Match trips by driver_id == this driver's CD id */
+    const myTrips=this.trips.filter(t=>t.driverId===this.user.id&&t.status==='approved');
+    /* Sort: upcoming first (future trips closest to today), then past */
+    const today=new Date().toISOString().slice(0,10);
+    myTrips.sort((a,b)=>{
+      const aUpcoming=a.retDate>=today,bUpcoming=b.retDate>=today;
+      if(aUpcoming&&!bUpcoming)return -1;
+      if(!aUpcoming&&bUpcoming)return 1;
+      if(aUpcoming)return new Date(a.depDate)-new Date(b.depDate);
+      return new Date(b.depDate)-new Date(a.depDate);
+    });
+    const upcoming=myTrips.filter(t=>t.retDate>=today);
+    const past=myTrips.filter(t=>t.retDate<today);
+    /* Header summary */
+    const summaryEl=$('cd-summary');
+    if(summaryEl)summaryEl.innerHTML=`<strong>${upcoming.length}</strong> upcoming · <strong>${past.length}</strong> completed`;
+    if(!myTrips.length){box.innerHTML='<div class="card" style="text-align:center;color:var(--text3);padding:2rem">No trips assigned to you yet. You\'ll see them here once admin assigns you a trip. 🚗</div>';return;}
+    box.innerHTML=myTrips.map(t=>{
+      const stops=parseStops(t.stops);
+      const isUpcoming=t.retDate>=today;
+      const isToday=t.depDate<=today&&t.retDate>=today;
+      const statusBadge=isToday?'<span class="badge" style="background:#FFF7ED;color:#9A3412;border:1px solid #FDBA74">🚗 In Progress</span>':isUpcoming?'<span class="badge b-sv-approved">📅 Upcoming</span>':'<span class="badge" style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1">✓ Completed</span>';
+      return`<div class="trip-card" style="border-left:4px solid ${isToday?'var(--gold)':isUpcoming?'var(--teal)':'var(--text3)'}">
+        <div class="trip-card-badge">${statusBadge}</div>
+        <div class="trip-card-route"><div class="route-chain">${routeChainHTML(stops,'route-chain')}</div></div>
+        <div class="trip-card-meta">
+          <strong>Officer:</strong> ${t.officer} · <strong>Unit:</strong> ${t.unit}<br>
+          <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)} · <strong>${stops.length} stop${stops.length!==1?'s':''}</strong><br>
+          <strong>Project:</strong> ${t.project||'—'}<br>
+          <strong>Purpose:</strong> ${t.purpose||'—'}<br>
+          <strong>Vehicle:</strong> ${t.vehicle||'—'}
+          ${t.companions?'<br><strong>Companions:</strong> '+t.companions:''}
+          ${t.adminNote?'<br><strong>Admin Note:</strong> <em>'+t.adminNote+'</em>':''}
+        </div>
+        ${stops.length>1?`<div style="margin-top:.5rem;padding:.4rem .6rem;background:var(--surf2);border-radius:8px;font-size:.7rem"><strong style="color:var(--text2);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px">Itinerary</strong><br>${stops.map((s,i)=>`<div style="padding:.15rem 0">${i+1}. ${s.from} → ${s.to} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)})</span></div>`).join('')}</div>`:''}
+      </div>`;
+    }).join('');
+  }
+
+  async changeDriverPass(){
+    const old=$('cd-old-pw')?.value,np=$('cd-new-pw')?.value,conf=$('cd-conf-pw')?.value;
+    const msg=$('cd-pw-msg');msg.textContent='';
+    if(!old||!np||!conf){msg.innerHTML='<span style="color:var(--red)">Fill all fields.</span>';return;}
+    if(np.length<4){msg.innerHTML='<span style="color:var(--red)">Min 4 chars.</span>';return;}
+    if(np!==conf){msg.innerHTML='<span style="color:var(--red)">Passwords don\'t match.</span>';return;}
+    const uid=this.user.id;
+    const rows=await API.get('contract_drivers','id=eq.'+encodeURIComponent(uid));
+    if(!rows?.length){msg.innerHTML='<span style="color:var(--red)">Account not found.</span>';return;}
+    const hashedOld=await hashPassword(old,uid);
+    const storedPw=extractPw(rows[0]);
+    const firstTimeOk=!storedPw&&old==='1234';
+    if(!firstTimeOk&&storedPw!==hashedOld&&storedPw!==old){msg.innerHTML='<span style="color:var(--red)">Wrong current password.</span>';return;}
+    const hashedNew=await hashPassword(np,uid);
+    await API.upd('contract_drivers','id=eq.'+encodeURIComponent(uid),{password:hashedNew});
+    msg.innerHTML='<span style="color:var(--green)">✓ Password changed!</span>';
+    $('cd-old-pw').value='';$('cd-new-pw').value='';$('cd-conf-pw').value='';
+    toast('Password updated');
+  }
+
+  /* ══════════════════════════════════════════════════
      ASSIGNMENT HISTORY — Full log + summary stats
   ══════════════════════════════════════════════════ */
   renderHistory(){
@@ -925,6 +1013,14 @@ const TD=new TripDesk();
     if(s.id==='ADMIN01'){
       TD.user={id:'ADMIN01',name:'Administrator',unit:'Admin',role:'admin',color:'#2D3592',email:''};
       $('lo-text').textContent='Loading trip data…';await TD._hydrate();TD._enter();
+      return;
+    }
+    if(s.id.startsWith('CD/')){
+      const cdrows=await API.get('contract_drivers','id=eq.'+encodeURIComponent(s.id));
+      if(!cdrows||!cdrows.length){clearSession();hideLoader();if(lv){lv.style.display='';lv.classList.add('active');}if(bg)bg.style.display='';return;}
+      const cd=cdrows[0];
+      TD.user={id:cd.id,name:cd.name,unit:'Contract Driver',role:'contract_driver',color:'#F5A623',email:cd.email||'',phone:cd.phone||'',license:cd.license_no||''};
+      $('lo-text').textContent='Loading your trips…';await TD._hydrate();TD._enter();
       return;
     }
     const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
