@@ -1,5 +1,8 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v9
+   THP-GHANA TRIPDESK v11
+   · Double-booking guard for drivers & vehicles
+   · Trip cancellation & edit-resubmit for rejected trips
+   · Driver trip log: start/end trip with odometer readings
    · Contract Drivers can log in to view their assigned trips
    · Contract Drivers (separate table, linked at assignment)
    · Assignment History for admin
@@ -172,7 +175,9 @@ class TripDesk{
       supervisorId:t.supervisor_id||'',supervisorName:t.supervisor_name||'',supervisorNote:t.supervisor_note||'',
       driver:t.driver||'',driverId:t.driver_id||'',vehicle:t.vehicle||'',vehicleId:t.vehicle_id||'',
       color:t.color||'',staffEmail:t.staff_email||'',adminNote:t.admin_note||'',
-      submitted:t.submitted,updatedAt:t.updated_at||''
+      submitted:t.submitted,updatedAt:t.updated_at||'',
+      tripStartedAt:t.trip_started_at||'',tripEndedAt:t.trip_ended_at||'',
+      odoStart:t.odo_start??null,odoEnd:t.odo_end??null
     }));
     this.vehicles=(veh||[]).map(v=>({id:v.id,plate:v.plate,make:v.make||'',status:v.status||'available'}));
     this.projects=(proj||[]).filter(p=>p.status==='active').map(p=>({id:p.id,name:p.name,code:p.code||'',desc:p.description||'',status:p.status}));
@@ -218,6 +223,8 @@ class TripDesk{
         if(me&&isDriver(me)){
           const tabs=$('staff-tabs');
           if(tabs)Array.from(tabs.children).forEach(t=>{if(t.textContent.includes('Request'))t.style.display='none';});
+          const at=$('st-assign-tab');if(at)at.style.display='';
+          this.renderDriverTrips('st-assign-cards','st-assign-summary');
         }
         this._populateStProjectsAndSupervisors();
         this._initStops('st');
@@ -373,7 +380,7 @@ class TripDesk{
     }
     const depDate=stops[0].depDate,retDate=stops[stops.length-1].retDate;
     /* Check peak daily concurrency across the requested range, not total overlapping trips */
-    const overlapping=this.trips.filter(b=>b.status!=='rejected'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
+    const overlapping=this.trips.filter(b=>b.status!=='rejected'&&b.status!=='cancelled'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
     let peakDay='',peakCount=0;
     const startMs=new Date(depDate).getTime(),endMs=new Date(retDate).getTime();
     for(let d=startMs;d<=endMs;d+=86400000){
@@ -451,6 +458,13 @@ class TripDesk{
     if(!mine.length){box.innerHTML='<div class="card" style="text-align:center;color:var(--text3);padding:2rem">No trips yet — submit your first request! 🚗</div>';return;}
     box.innerHTML=mine.map(t=>{
       const stops=parseStops(t.stops);
+      const today=new Date().toISOString().slice(0,10);
+      /* Cancellable: not yet rejected/cancelled, trip hasn't started, and departure hasn't passed */
+      const canCancel=['pending','supervisor_approved','approved'].includes(t.status)&&!t.tripStartedAt&&t.depDate>=today;
+      const canResubmit=t.status==='rejected'||t.status==='cancelled';
+      let actions='';
+      if(canCancel)actions+=`<button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.cancelTrip('${t.id}')">⊘ Cancel Trip</button> `;
+      if(canResubmit)actions+=`<button class="btn-sm btn-teal" onclick="TD.resubmitTrip('${t.id}')">↻ Edit &amp; Resubmit</button>`;
       return`<div class="trip-card">
         <div class="trip-card-badge">${this._badge(t.status)}</div>
         <div class="trip-card-route"><div class="route-chain">${routeChainHTML(stops,'route-chain')}</div></div>
@@ -463,12 +477,67 @@ class TripDesk{
           ${t.adminNote?'<br><strong>Admin Note:</strong> <em>'+t.adminNote+'</em>':''}
         </div>
         ${this._timeline4(t)}
+        ${actions?'<div style="margin-top:.6rem;display:flex;gap:.35rem;flex-wrap:wrap">'+actions+'</div>':''}
       </div>`;
     }).join('');
   }
 
+  /* ── CANCEL TRIP ── */
+  async cancelTrip(id){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    const wasAssigned=t.status==='approved';
+    if(!confirm('Cancel this trip ('+routeChain(parseStops(t.stops))+', '+fmt(t.depDate)+')?'+(wasAssigned?'\n\nA driver and vehicle were already assigned — they will be freed and notified.':'')))return;
+    showLoader('Cancelling…');
+    const r=await API.upd('trips','id=eq.'+encodeURIComponent(id),{status:'cancelled',updated_at:new Date().toISOString()});
+    hideLoader();
+    if(!r){toast('Server error','err');return;}
+    t.status='cancelled';
+    const prefix=isSupervisor(this.user)?'sv':'st';
+    this.renderMyTrips(prefix);
+    if(prefix==='sv')this.renderSupervisorAllTrips();
+    toast('Trip cancelled — the slot is now free for others');
+    /* Notify admin (and driver if one was assigned) */
+    const adminStaff=this.staff.find(s=>s.role==='admin');
+    let driverEmail='';
+    if(wasAssigned&&t.driverId){
+      driverEmail=this.staff.find(s=>s.id===t.driverId)?.email||this.contractDrivers.find(d=>d.id===t.driverId)?.email||'';
+    }
+    const svEmail=this.staff.find(s=>s.id===t.supervisorId)?.email||'';
+    API.gasNotify({action:'tripCancelled',data:{
+      id,officer:t.officer,unit:t.unit,route:routeChain(parseStops(t.stops)),project:t.project,
+      depDate:t.depDate,retDate:t.retDate,driver:t.driver||'',vehicle:t.vehicle||'',
+      adminEmail:adminStaff?.email||ADMIN_EMAIL,supervisorEmail:svEmail,supervisorName:t.supervisorName||'',driverEmail
+    }}).catch(()=>{});
+  }
+
+  /* ── EDIT & RESUBMIT (rejected/cancelled trips) ── */
+  resubmitTrip(id){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    const stops=parseStops(t.stops);
+    const prefix=isSupervisor(this.user)?'sv':'st';
+    /* Prefill the request form */
+    const projectEl=$(prefix==='sv'?'sv-tr-project':'tr-project');
+    const purposeEl=$(prefix==='sv'?'sv-tr-purpose':'tr-purpose');
+    const companionsEl=$(prefix==='sv'?'sv-tr-companions':'tr-companions');
+    const supervisorEl=$(prefix==='sv'?'sv-tr-supervisor':'tr-supervisor');
+    if(projectEl)projectEl.value=t.project||'';
+    if(purposeEl)purposeEl.value=t.purpose||'';
+    if(companionsEl)companionsEl.value=t.companions||'';
+    if(supervisorEl&&t.supervisorId)supervisorEl.value=t.supervisorId;
+    this._setStops(prefix,stops.length?stops.map(s=>({from:s.from||'',to:s.to||'',dep:s.depDate||'',ret:s.retDate||''})):[{from:'Accra',to:'',dep:'',ret:''}]);
+    this._renderStops(prefix);
+    this._updateSummary(prefix);
+    /* Switch to the Request tab */
+    const scope=prefix==='sv'?'supervisor':'staff';
+    const tabs=$(scope+'-tabs');
+    const btn=tabs?Array.from(tabs.children).find(b=>b.textContent.includes('Request')):null;
+    this.showTab(scope,'request',btn);
+    toast('Form pre-filled from your previous request — adjust the dates and resubmit','info');
+  }
+
   _timeline4(t){
     const s=t.status;
+    if(s==='cancelled')return'<div class="trip-timeline"><div class="tl-step" style="color:var(--text3)"><div class="tl-dot" style="background:var(--text3);border-color:var(--text3)"></div>Cancelled by requester</div></div>';
     const steps=[
       {label:'Submitted',done:true},
       {label:'Supervisor',done:s==='supervisor_approved'||s==='approved',active:s==='pending',rej:s==='rejected'},
@@ -485,6 +554,7 @@ class TripDesk{
   _badge(s){
     if(s==='approved')return'<span class="badge b-approved">✓ Approved</span>';
     if(s==='rejected')return'<span class="badge b-rejected">✗ Rejected</span>';
+    if(s==='cancelled')return'<span class="badge" style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1">⊘ Cancelled</span>';
     if(s==='supervisor_approved')return'<span class="badge b-sv-approved">📋 Sv. Approved</span>';
     return'<span class="badge b-pending">⏳ Pending</span>';
   }
@@ -597,14 +667,33 @@ class TripDesk{
     $('tm-title').textContent='Assign: '+t.officer;
     $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`;
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
-    const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
-    const cdOptions=this.contractDrivers.map(d=>`<option value="CD_${d.id}">🚐 ${d.name} (${d.id})</option>`).join('');
-    const selfDriveOpt=`<option value="SELF_${t.staffId}" style="font-weight:600">🚗 Self-Driving — ${t.officer}</option>`;
+    /* ── Double-booking guard: find drivers & vehicles committed to other approved trips on overlapping dates ── */
+    const busyDrivers={},busyVehicles={};
+    this.trips.forEach(b=>{
+      if(b.id===t.id||b.status!=='approved')return;
+      if(!(t.depDate<=b.retDate&&t.retDate>=b.depDate))return; /* no date overlap */
+      const when=fmt(b.depDate)+'–'+fmt(b.retDate);
+      if(b.driverId&&!busyDrivers[b.driverId])busyDrivers[b.driverId]=when;
+      if(b.vehicleId&&!busyVehicles[b.vehicleId])busyVehicles[b.vehicleId]=when;
+    });
+    const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>{
+      const busy=busyDrivers[d.id];
+      return`<option value="${d.id}" ${busy?'disabled':''}>${d.name}${busy?' — ⛔ on trip '+busy:''}</option>`;
+    }).join('');
+    const cdOptions=this.contractDrivers.map(d=>{
+      const busy=busyDrivers[d.id];
+      return`<option value="CD_${d.id}" ${busy?'disabled':''}>🚐 ${d.name} (${d.id})${busy?' — ⛔ on trip '+busy:''}</option>`;
+    }).join('');
+    const selfBusy=busyDrivers[t.staffId];
+    const selfDriveOpt=`<option value="SELF_${t.staffId}" ${selfBusy?'disabled':''} style="font-weight:600">🚗 Self-Driving — ${t.officer}${selfBusy?' — ⛔ on trip '+selfBusy:''}</option>`;
     $('tm-driver').innerHTML='<option value="">— Select driver —</option>'
       +(driverOptions?`<optgroup label="── Staff Drivers ──">${driverOptions}</optgroup>`:'')
       +(cdOptions?`<optgroup label="── Contract Drivers ──">${cdOptions}</optgroup>`:'')
       +`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
-    $('tm-vehicle').innerHTML='<option value="">— Select vehicle —</option>'+this.vehicles.map(v=>`<option value="${v.id}">${v.plate} — ${v.make}</option>`).join('');
+    $('tm-vehicle').innerHTML='<option value="">— Select vehicle —</option>'+this.vehicles.map(v=>{
+      const busy=busyVehicles[v.id];
+      return`<option value="${v.id}" ${busy?'disabled':''}>${v.plate} — ${v.make}${busy?' — ⛔ on trip '+busy:''}</option>`;
+    }).join('');
     $('tm-note').value='';$('tm-id').value=id;$('trip-modal').classList.add('open');
   }
 
@@ -613,6 +702,10 @@ class TripDesk{
     const dId=$('tm-driver').value,vId=$('tm-vehicle').value,note=$('tm-note').value.trim();
     if(!dId)return toast('Select a driver','err');
     if(!vId)return toast('Select a vehicle','err');
+    /* Final double-booking check at save time */
+    const rawDid=dId.startsWith('SELF_')?dId.replace('SELF_',''):dId.startsWith('CD_')?dId.replace('CD_',''):dId;
+    const conflict=this.trips.find(b=>b.id!==t.id&&b.status==='approved'&&t.depDate<=b.retDate&&t.retDate>=b.depDate&&(b.driverId===rawDid||b.vehicleId===vId));
+    if(conflict){toast('⛔ Double-booking: '+(conflict.driverId===rawDid?'driver':'vehicle')+' is already on '+conflict.officer+'\'s trip '+fmt(conflict.depDate)+'–'+fmt(conflict.retDate),'err');return;}
     const isSelfDrive=dId.startsWith('SELF_');
     const isContract=dId.startsWith('CD_');
     const actualDriverId=isSelfDrive?dId.replace('SELF_',''):isContract?dId.replace('CD_',''):dId;
@@ -650,9 +743,9 @@ class TripDesk{
   /* ══════════════════════════════════════════════════
      CONTRACT DRIVER DASHBOARD — Their assigned trips
   ══════════════════════════════════════════════════ */
-  renderDriverTrips(){
-    const box=$('cd-trips-cards');if(!box)return;
-    /* Match trips by driver_id == this driver's CD id */
+  renderDriverTrips(boxId='cd-trips-cards',summaryId='cd-summary'){
+    const box=$(boxId);if(!box)return;
+    /* Match trips by driver_id == this driver's id (CD/xxx or staff id) */
     const myTrips=this.trips.filter(t=>t.driverId===this.user.id&&t.status==='approved');
     /* Sort: upcoming first (future trips closest to today), then past */
     const today=new Date().toISOString().slice(0,10);
@@ -666,15 +759,31 @@ class TripDesk{
     const upcoming=myTrips.filter(t=>t.retDate>=today);
     const past=myTrips.filter(t=>t.retDate<today);
     /* Header summary */
-    const summaryEl=$('cd-summary');
+    const summaryEl=$(summaryId);
     if(summaryEl)summaryEl.innerHTML=`<strong>${upcoming.length}</strong> upcoming · <strong>${past.length}</strong> completed`;
     if(!myTrips.length){box.innerHTML='<div class="card" style="text-align:center;color:var(--text3);padding:2rem">No trips assigned to you yet. You\'ll see them here once admin assigns you a trip. 🚗</div>';return;}
     box.innerHTML=myTrips.map(t=>{
       const stops=parseStops(t.stops);
       const isUpcoming=t.retDate>=today;
-      const isToday=t.depDate<=today&&t.retDate>=today;
-      const statusBadge=isToday?'<span class="badge" style="background:#FFF7ED;color:#9A3412;border:1px solid #FDBA74">🚗 In Progress</span>':isUpcoming?'<span class="badge b-sv-approved">📅 Upcoming</span>':'<span class="badge" style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1">✓ Completed</span>';
-      return`<div class="trip-card" style="border-left:4px solid ${isToday?'var(--gold)':isUpcoming?'var(--teal)':'var(--text3)'}">
+      const started=!!t.tripStartedAt,ended=!!t.tripEndedAt;
+      const isDriving=started&&!ended;
+      const statusBadge=isDriving?'<span class="badge" style="background:#FFF7ED;color:#9A3412;border:1px solid #FDBA74">🚗 On Trip</span>':ended?'<span class="badge b-approved">✓ Trip Logged</span>':isUpcoming?'<span class="badge b-sv-approved">📅 Upcoming</span>':'<span class="badge" style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1">— Not Logged</span>';
+      /* Trip log section */
+      let logHTML='';
+      if(started||ended){
+        const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):null;
+        logHTML=`<div style="margin-top:.5rem;padding:.5rem .7rem;background:${ended?'#ECFDF5':'#FFF7ED'};border:1px solid ${ended?'#6EE7B7':'#FDBA74'};border-radius:8px;font-size:.7rem;line-height:1.7">
+          <strong style="font-size:.6rem;text-transform:uppercase;letter-spacing:.5px;color:${ended?'#065F46':'#9A3412'}">Trip Log</strong><br>
+          ▶ <strong>Started:</strong> ${fmtTime(t.tripStartedAt)}${t.odoStart!=null?' · Odo: '+Number(t.odoStart).toLocaleString()+' km':''}
+          ${ended?`<br>⏹ <strong>Ended:</strong> ${fmtTime(t.tripEndedAt)}${t.odoEnd!=null?' · Odo: '+Number(t.odoEnd).toLocaleString()+' km':''}`:''}
+          ${km!=null?`<br>📏 <strong>Distance:</strong> ${km.toLocaleString()} km`:''}
+        </div>`;
+      }
+      /* Action buttons */
+      let actions='';
+      if(!started)actions=`<div style="margin-top:.6rem"><button class="btn-sm btn-green" onclick="TD.openTripLog('${t.id}','start')">▶ Start Trip</button></div>`;
+      else if(!ended)actions=`<div style="margin-top:.6rem"><button class="btn-sm btn-red" onclick="TD.openTripLog('${t.id}','end')">⏹ End Trip</button></div>`;
+      return`<div class="trip-card" style="border-left:4px solid ${isDriving?'var(--gold)':ended?'var(--green)':isUpcoming?'var(--teal)':'var(--text3)'}">
         <div class="trip-card-badge">${statusBadge}</div>
         <div class="trip-card-route"><div class="route-chain">${routeChainHTML(stops,'route-chain')}</div></div>
         <div class="trip-card-meta">
@@ -687,8 +796,42 @@ class TripDesk{
           ${t.adminNote?'<br><strong>Admin Note:</strong> <em>'+t.adminNote+'</em>':''}
         </div>
         ${stops.length>1?`<div style="margin-top:.5rem;padding:.4rem .6rem;background:var(--surf2);border-radius:8px;font-size:.7rem"><strong style="color:var(--text2);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px">Itinerary</strong><br>${stops.map((s,i)=>`<div style="padding:.15rem 0">${i+1}. ${s.from} → ${s.to} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)})</span></div>`).join('')}</div>`:''}
+        ${logHTML}${actions}
       </div>`;
     }).join('');
+  }
+
+  /* ── TRIP LOG (start/end with odometer) ── */
+  openTripLog(id,phase){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    this._tlogId=id;this._tlogPhase=phase;
+    $('tlog-title').textContent=phase==='start'?'▶ Start Trip':'⏹ End Trip';
+    $('tlog-info').innerHTML=`<strong>Route:</strong> ${routeChain(parseStops(t.stops))}<br><strong>Vehicle:</strong> ${t.vehicle||'—'}${phase==='end'&&t.odoStart!=null?'<br><strong>Odometer at start:</strong> '+Number(t.odoStart).toLocaleString()+' km':''}`;
+    $('tlog-odo').value='';$('tlog-msg').textContent='';
+    $('tlog-odo-label').textContent=phase==='start'?'Odometer reading at departure (km)':'Odometer reading at return (km)';
+    $('tlog-modal').classList.add('open');
+  }
+  async saveTripLog(){
+    const id=this._tlogId,phase=this._tlogPhase;
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    const msg=$('tlog-msg');msg.textContent='';
+    const odoRaw=$('tlog-odo').value.trim();
+    const odo=odoRaw===''?null:Number(odoRaw);
+    if(odoRaw!==''&&(isNaN(odo)||odo<0)){msg.innerHTML='<span style="color:var(--red)">Enter a valid odometer number.</span>';return;}
+    if(phase==='end'&&odo!=null&&t.odoStart!=null&&odo<t.odoStart){msg.innerHTML='<span style="color:var(--red)">End reading can\'t be less than start reading ('+Number(t.odoStart).toLocaleString()+' km).</span>';return;}
+    const now=new Date().toISOString();
+    const patch=phase==='start'?{trip_started_at:now,odo_start:odo}:{trip_ended_at:now,odo_end:odo};
+    showLoader(phase==='start'?'Starting trip…':'Ending trip…');
+    const r=await API.upd('trips','id=eq.'+encodeURIComponent(id),patch);
+    hideLoader();
+    if(!r){toast('Server error — check that the trip log columns exist','err');return;}
+    if(phase==='start'){t.tripStartedAt=now;t.odoStart=odo;}
+    else{t.tripEndedAt=now;t.odoEnd=odo;}
+    closeModal('tlog-modal');
+    /* Re-render whichever driver view is active */
+    if(this.user.role==='contract_driver')this.renderDriverTrips();
+    else this.renderDriverTrips('st-assign-cards','st-assign-summary');
+    toast(phase==='start'?'Trip started — safe journey! 🚗':'Trip ended — log saved ✓');
   }
 
   async changeDriverPass(){
@@ -762,6 +905,8 @@ class TripDesk{
     }
     listEl.innerHTML=assigned.map(t=>{
       const stops=parseStops(t.stops);
+      const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):null;
+      const logLine=t.tripStartedAt?`<br><strong>🚗 Trip Log:</strong> Started ${fmtTime(t.tripStartedAt)}${t.tripEndedAt?' · Ended '+fmtTime(t.tripEndedAt):' · <span style="color:#9A3412;font-weight:700">still on trip</span>'}${km!=null?' · <span class="hist-vehicle-tag">📏 '+km.toLocaleString()+' km</span>':''}`:'';
       return`<div class="hist-card">
         <div class="hist-card-main">
           <div class="hist-officer">${t.officer} <span style="font-weight:400;color:var(--text2);font-size:.72rem">· ${t.unit}</span></div>
@@ -773,6 +918,7 @@ class TripDesk{
             <strong style="margin-left:.4rem">Vehicle:</strong> <span class="hist-vehicle-tag">🚘 ${t.vehicle||'—'}</span>
             ${t.supervisorName?'<br><strong>Approved by:</strong> '+t.supervisorName:''}
             ${t.adminNote?'<br><strong>Admin Note:</strong> <em>'+t.adminNote+'</em>':''}
+            ${logLine}
           </div>
         </div>
         <div class="hist-time">${fmtTime(t.updatedAt||t.submitted)}</div>
@@ -989,7 +1135,7 @@ class TripDesk{
     for(let i=0;i<first;i++)h+='<div class="cal-day" style="background:transparent;border:none"></div>';
     for(let d=1;d<=days;d++){
       const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const dayTrips=[];this.trips.forEach(t=>{if(t.status==='rejected')return;parseStops(t.stops).forEach(s=>{if(ds>=s.depDate&&ds<=s.retDate&&!dayTrips.find(x=>x.id===t.id))dayTrips.push(t);});});
+      const dayTrips=[];this.trips.forEach(t=>{if(t.status==='rejected'||t.status==='cancelled')return;parseStops(t.stops).forEach(s=>{if(ds>=s.depDate&&ds<=s.retDate&&!dayTrips.find(x=>x.id===t.id))dayTrips.push(t);});});
       const count=dayTrips.length,isPast=ds<todayStr;
       if(isAdmin){
         h+=`<div class="cal-day${ds===todayStr?' today':''}"><div class="cal-num">${d}</div>`;
