@@ -906,7 +906,7 @@ class TripDesk{
     listEl.innerHTML=assigned.map(t=>{
       const stops=parseStops(t.stops);
       const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):null;
-      const logLine=t.tripStartedAt?`<br><strong>🚗 Trip Log:</strong> Started ${fmtTime(t.tripStartedAt)}${t.tripEndedAt?' · Ended '+fmtTime(t.tripEndedAt):' · <span style="color:#9A3412;font-weight:700">still on trip</span>'}${km!=null?' · <span class="hist-vehicle-tag">📏 '+km.toLocaleString()+' km</span>':''}`:'';
+      const logLine=t.tripStartedAt?`<br><strong>🚗 Trip Log:</strong> Started ${fmtTime(t.tripStartedAt)}${t.odoStart!=null?' <span class="hist-vehicle-tag">Odo: '+Number(t.odoStart).toLocaleString()+' km</span>':''}${t.tripEndedAt?' · Ended '+fmtTime(t.tripEndedAt)+(t.odoEnd!=null?' <span class="hist-vehicle-tag">Odo: '+Number(t.odoEnd).toLocaleString()+' km</span>':''):' · <span style="color:#9A3412;font-weight:700">still on trip</span>'}${km!=null?' · <span class="hist-vehicle-tag" style="color:var(--green);border-color:#6EE7B7">📏 '+km.toLocaleString()+' km travelled</span>':''}`:'';
       return`<div class="hist-card">
         <div class="hist-card-main">
           <div class="hist-officer">${t.officer} <span style="font-weight:400;color:var(--text2);font-size:.72rem">· ${t.unit}</span></div>
@@ -947,8 +947,11 @@ class TripDesk{
   }
   async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();this.renderHistory();toast('Deleted');}
   exportCSV(){
-    let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Driver,Vehicle,Submitted\n';
-    this.trips.forEach(t=>{csv+=`"${t.officer}","${t.unit}","${t.project||''}","${routeChain(parseStops(t.stops))}","${t.supervisorName||''}","${fmt(t.depDate)}","${fmt(t.retDate)}","${t.status}","${t.driver||''}","${t.vehicle||''}","${fmt(t.submitted)}"\n`;});
+    let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Driver,Vehicle,Submitted,Trip Started,Odo Start (km),Trip Ended,Odo End (km),Distance (km)\n';
+    this.trips.forEach(t=>{
+      const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):'';
+      csv+=`"${t.officer}","${t.unit}","${t.project||''}","${routeChain(parseStops(t.stops))}","${t.supervisorName||''}","${fmt(t.depDate)}","${fmt(t.retDate)}","${t.status}","${t.driver||''}","${t.vehicle||''}","${fmt(t.submitted)}","${t.tripStartedAt?fmtTime(t.tripStartedAt):''}","${t.odoStart??''}","${t.tripEndedAt?fmtTime(t.tripEndedAt):''}","${t.odoEnd??''}","${km}"\n`;
+    });
     const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='TripDesk_'+Date.now()+'.csv';a.click();
   }
 
