@@ -56,7 +56,15 @@ const API={
   ins(t,d){return this._q(t,{method:'POST',body:JSON.stringify(d)});},
   upd(t,q,d){return this._q(t+'?'+q,{method:'PATCH',body:JSON.stringify(d)});},
   del(t,q){return this._q(t+'?'+q,{method:'DELETE'});},
-  gasPost(p){return fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(p),redirect:'follow'}).then(r=>r.json()).catch(()=>null);}
+  gasPost(p){return fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(p),redirect:'follow'}).then(r=>r.json()).catch(()=>null);},
+  /* Sends notification and reports delivery: toasts who was skipped and why */
+  gasNotify(p){
+    return this.gasPost(p).then(res=>{
+      if(!res)return; /* network/CORS — can't confirm either way */
+      if(res.success===false){toast('Email notification failed: '+(res.error||'unknown error'),'err');return;}
+      if(res.skipped&&res.skipped.length)toast('No email sent to: '+res.skipped.join(', '),'info');
+    });
+  }
 };
 
 function saveSession(id){localStorage.setItem('td_session',JSON.stringify({id,exp:Date.now()+12*3600000}));}
@@ -411,11 +419,12 @@ class TripDesk{
     this._initStops(prefix);
     $(isSv?'sv-tr-summary':'tr-summary').style.display='none';
     this.renderMyTrips(prefix);
+    if(!this.user.email)toast('⚠ You have no email on your profile — you won\'t receive email updates. Ask admin to add it.','info');
 
     if(userIsSupervisor){
       /* Notify admin directly — trip is ready for assignment */
       toast('Trip submitted! Goes directly to admin for assignment.');
-      API.gasPost({action:'supervisorDecision',data:{
+      API.gasNotify({action:'supervisorDecision',data:{
         id,status:'supervisor_approved',officer:this.user.name,unit:this.user.unit,
         project,purpose,route:routeChain(stops),depDate,retDate,companions,
         staffEmail:this.user.email,supervisorName,supervisorEmail,
@@ -426,7 +435,7 @@ class TripDesk{
       this.renderSupervisorAllTrips();
     }else{
       toast('Trip submitted! Your supervisor will be notified.');
-      API.gasPost({action:'tripSubmitted',data:{
+      API.gasNotify({action:'tripSubmitted',data:{
         id,officer:this.user.name,unit:this.user.unit,project,purpose,
         route:routeChain(stops),depDate,retDate,companions,
         staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL
@@ -517,10 +526,12 @@ class TripDesk{
     this.renderSupervisorPending();this.renderSupervisorAllTrips();
     toast(newStatus==='supervisor_approved'?'Approved — forwarded to admin ✓':'Trip rejected');
     const adminStaff=this.staff.find(s=>s.role==='admin');
-    API.gasPost({action:'supervisorDecision',data:{
+    /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
+    const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
+    API.gasNotify({action:'supervisorDecision',data:{
       id,status:newStatus,supervisorNote:note,officer:t.officer,
       route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
-      depDate:t.depDate,retDate:t.retDate,staffEmail:t.staffEmail,
+      depDate:t.depDate,retDate:t.retDate,staffEmail:officerEmail,
       supervisorName:this.user.name,supervisorEmail:this.user.email,adminEmail:adminStaff?.email||ADMIN_EMAIL
     }}).catch(()=>{});
   }
@@ -625,10 +636,14 @@ class TripDesk{
     this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
     toast('Trip approved & assigned ✓');
     const svObj=this.staff.find(s=>s.id===t.supervisorId);
-    API.gasPost({action:'adminAssigned',data:{
+    /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
+    const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
+    if(!isSelfDrive&&!dEmail)toast('⚠ '+dName+' has no email on file — driver won\'t receive the assignment email','info');
+    if(!officerEmail)toast('⚠ '+t.officer+' has no email on file — officer won\'t receive the confirmation email','info');
+    API.gasNotify({action:'adminAssigned',data:{
       id,officer:t.officer,route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,driver:dName,vehicle:vLabel,adminNote:note,
-      staffEmail:t.staffEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?'':dEmail
+      staffEmail:officerEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?officerEmail:dEmail
     }}).catch(()=>{});
   }
 
