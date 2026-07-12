@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
-<link rel="stylesheet" href="td-styles.css?v=9">
+<link rel="stylesheet" href="td-styles.css?v=11">
 </head>
 <body>
 
@@ -46,6 +46,7 @@
     <button class="tab active" onclick="TD.showTab('staff','cal',this);TD._renderCalendar('st-calendar',TD._stCalM,TD._stCalY)">📅 Availability</button>
     <button class="tab" onclick="TD.showTab('staff','request',this)">🚗 Request Trip</button>
     <button class="tab" onclick="TD.showTab('staff','mytrips',this)">📋 My Trips</button>
+    <button class="tab" id="st-assign-tab" style="display:none" onclick="TD.showTab('staff','assign',this);TD.renderDriverTrips('st-assign-cards','st-assign-summary')">🚐 Assignments</button>
     <button class="tab" onclick="TD.showTab('staff','chpw',this)">🔑 Password</button>
   </nav>
   <main class="main-content">
@@ -70,6 +71,10 @@
       </div>
     </div>
     <div id="staff-mytrips" class="tabpanel"><div id="st-trips-cards"></div></div>
+    <div id="staff-assign" class="tabpanel">
+      <div class="dash-vehicle-banner"><div class="dvb-road"><div class="dvb-car">🚗</div></div><div class="dvb-label">Your driving assignments · <span id="st-assign-summary">—</span></div></div>
+      <div id="st-assign-cards"></div>
+    </div>
     <div id="staff-chpw" class="tabpanel">
       <div class="card" style="max-width:420px">
         <h3>🔑 Change Password</h3>
@@ -126,7 +131,7 @@
       <div class="card">
         <div class="card-hdr"><h3>📋 All Trips</h3>
           <div class="card-tools">
-            <select class="fi" id="sv-trip-status" onchange="TD.renderSupervisorAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Forwarded to Admin</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+            <select class="fi" id="sv-trip-status" onchange="TD.renderSupervisorAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Forwarded to Admin</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option></select>
             <input class="fi" type="month" id="sv-trip-month" onchange="TD.renderSupervisorAllTrips()">
           </div>
         </div>
@@ -224,7 +229,7 @@
       <div class="card">
         <div class="card-hdr"><h3>📋 All Trips</h3>
           <div class="card-tools">
-            <select class="fi" id="ad-trip-status" onchange="TD.renderAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Supervisor Approved</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+            <select class="fi" id="ad-trip-status" onchange="TD.renderAllTrips()"><option value="">All Statuses</option><option value="pending">Pending</option><option value="supervisor_approved">Supervisor Approved</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option></select>
             <select class="fi" id="ad-trip-unit" onchange="TD.renderAllTrips()"><option value="">All Units</option></select>
             <input class="fi" type="month" id="ad-trip-month" onchange="TD.renderAllTrips()">
             <button class="btn-sm btn-teal" onclick="TD.exportCSV()">⬇ CSV</button>
@@ -352,6 +357,21 @@
   </div>
 </div>
 
+<!-- Trip Log Modal (driver start/end) -->
+<div class="overlay" id="tlog-modal">
+  <div class="modal" style="max-width:380px">
+    <h3 id="tlog-title">Trip Log</h3>
+    <div id="tlog-info" class="modal-info"></div>
+    <div class="field"><label id="tlog-odo-label">Odometer reading (km)</label><input type="number" id="tlog-odo" placeholder="e.g. 45120" inputmode="numeric" min="0"></div>
+    <p class="card-sub" style="margin-bottom:.4rem">Read the number from the vehicle's dashboard. Leave blank if unreadable.</p>
+    <div id="tlog-msg" class="form-msg"></div>
+    <div class="modal-foot">
+      <button class="btn-sm btn-outline" onclick="closeModal('tlog-modal')">Cancel</button>
+      <button class="btn-sm btn-gold" onclick="TD.saveTripLog()">✓ Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- Self Password Reset Modal -->
 <div class="overlay" id="reset-modal">
   <div class="modal" style="max-width:380px">
@@ -367,6 +387,6 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=9"></script>
+<script src="td-app.js?v=11"></script>
 </body>
 </html>
