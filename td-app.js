@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v11
+   THP-GHANA TRIPDESK v12
+   · Admin: edit trip dates, On-the-Road view, Odometer Log table
    · Double-booking guard for drivers & vehicles
    · Trip cancellation & edit-resubmit for rejected trips
    · Driver trip log: start/end trip with odometer readings
@@ -882,6 +883,39 @@ class TripDesk{
 
     countEl.textContent=assigned.length;
 
+    /* ── 🚦 On the Road Now — started but not ended (unfiltered: always live) ── */
+    const roadCard=$('ontheroad-card'),roadList=$('ontheroad-list');
+    if(roadCard&&roadList){
+      const onRoad=this.trips.filter(t=>t.status==='approved'&&t.tripStartedAt&&!t.tripEndedAt);
+      if(onRoad.length){
+        roadCard.style.display='';
+        roadList.innerHTML=onRoad.map(t=>`<div style="display:flex;align-items:center;gap:.6rem;padding:.5rem .7rem;background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;margin-bottom:.4rem;font-size:.76rem;flex-wrap:wrap">
+          <span style="font-weight:700">🚗 ${t.driver}</span>
+          <span>→ ${routeChain(parseStops(t.stops))}</span>
+          <span class="hist-vehicle-tag">🚘 ${t.vehicle||'—'}</span>
+          <span style="color:var(--text3);font-size:.68rem;margin-left:auto">Departed ${fmtTime(t.tripStartedAt)}${t.odoStart!=null?' · Odo '+Number(t.odoStart).toLocaleString()+' km':''}</span>
+        </div>`).join('');
+      }else roadCard.style.display='none';
+    }
+
+    /* ── 🧭 Odometer Log table — trips with logs, follows same filters ── */
+    const odoBody=$('odo-log-body');
+    if(odoBody){
+      const logged=assigned.filter(t=>t.tripStartedAt);
+      if(!logged.length)odoBody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:1.2rem">No odometer entries yet. Drivers log readings via ▶ Start / ⏹ End Trip on their page.</td></tr>';
+      else odoBody.innerHTML=logged.map(t=>{
+        const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):null;
+        return`<tr>
+          <td><strong>${t.officer}</strong></td><td style="font-size:.7rem">${t.driver}</td><td style="font-size:.7rem">${t.vehicle||'—'}</td>
+          <td style="font-size:.68rem;white-space:nowrap">${fmtTime(t.tripStartedAt)}</td>
+          <td>${t.odoStart!=null?Number(t.odoStart).toLocaleString()+' km':'—'}</td>
+          <td style="font-size:.68rem;white-space:nowrap">${t.tripEndedAt?fmtTime(t.tripEndedAt):'<span style="color:#9A3412;font-weight:700">on trip</span>'}</td>
+          <td>${t.odoEnd!=null?Number(t.odoEnd).toLocaleString()+' km':'—'}</td>
+          <td>${km!=null?'<strong style="color:var(--green)">'+km.toLocaleString()+' km</strong>':'—'}</td>
+        </tr>`;
+      }).join('');
+    }
+
     /* Summary stats */
     const totalAssigned=assigned.length;
     const driverMap={};assigned.forEach(t=>{const d=t.driver||'—';driverMap[d]=(driverMap[d]||0)+1;});
@@ -942,10 +976,46 @@ class TripDesk{
       <td style="font-size:.66rem;white-space:nowrap;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td>
       <td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td>
       <td>${this._badge(t.status)}</td><td style="font-size:.68rem">${t.driver||'—'}</td><td style="font-size:.68rem">${t.vehicle||'—'}</td>
-      <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
+      <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎</button> <button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
     </tr>`;}).join('');
   }
   async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();this.renderHistory();toast('Deleted');}
+  /* ── ADMIN — Edit Trip Dates (fix wrongly-entered dates blocking the calendar) ── */
+  openEditDates(id){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    this._edateId=id;
+    $('edate-info').innerHTML=`<strong>Officer:</strong> ${t.officer}<br><strong>Route:</strong> ${routeChain(parseStops(t.stops))}<br><strong>Current dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}`;
+    $('edate-dep').value=t.depDate||'';$('edate-ret').value=t.retDate||'';
+    $('edate-msg').textContent='';
+    $('edate-modal').classList.add('open');
+  }
+  async saveTripDates(){
+    const id=this._edateId,t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    const msg=$('edate-msg');msg.textContent='';
+    const dep=$('edate-dep').value,ret=$('edate-ret').value;
+    if(!dep||!ret){msg.innerHTML='<span style="color:var(--red)">Both dates required.</span>';return;}
+    if(new Date(ret)<new Date(dep)){msg.innerHTML='<span style="color:var(--red)">Return can\'t be before departure.</span>';return;}
+    /* Adjust itinerary: first stop departs on new dep, last stop returns on new ret; clamp middle stops inside range */
+    const stops=parseStops(t.stops);
+    if(stops.length){
+      stops[0].depDate=dep;
+      stops[stops.length-1].retDate=ret;
+      stops.forEach(s=>{
+        if(s.depDate<dep)s.depDate=dep;
+        if(s.retDate>ret)s.retDate=ret;
+        if(s.retDate<s.depDate)s.retDate=s.depDate;
+      });
+    }
+    showLoader('Saving dates…');
+    const r=await API.upd('trips','id=eq.'+encodeURIComponent(id),{dep_date:dep,ret_date:ret,stops:JSON.stringify(stops),updated_at:new Date().toISOString()});
+    hideLoader();
+    if(!r){toast('Server error','err');return;}
+    t.depDate=dep;t.retDate=ret;t.stops=stops;
+    closeModal('edate-modal');
+    this.renderDash();this.renderAllTrips();this.renderAdminPending();this._renderAdminCal();this.renderHistory();
+    toast('Trip dates corrected ✓ — calendar slots updated');
+  }
+
   exportCSV(){
     let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Driver,Vehicle,Submitted,Trip Started,Odo Start (km),Trip Ended,Odo End (km),Distance (km)\n';
     this.trips.forEach(t=>{
