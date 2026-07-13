@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THP-Ghana TripDesk</title>
-<link rel="stylesheet" href="td-styles.css?v=11">
+<link rel="stylesheet" href="td-styles.css?v=12">
 </head>
 <body>
 
@@ -212,6 +212,18 @@
     </div>
     <!-- ═══ ASSIGNMENT HISTORY TAB ═══ -->
     <div id="admin-history" class="tabpanel">
+      <div class="card" id="ontheroad-card" style="display:none;border-left:4px solid var(--gold)">
+        <h3>🚦 On the Road Now</h3>
+        <p class="card-sub">Trips started by drivers but not yet ended — live view.</p>
+        <div id="ontheroad-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">
+          <h3>🧭 Odometer Log</h3>
+          <span style="font-size:.66rem;color:var(--text3)">Follows the filters below</span>
+        </div>
+        <div class="scr"><table><thead><tr><th>Officer</th><th>Driver</th><th>Vehicle</th><th>Started</th><th>Odo Start</th><th>Ended</th><th>Odo End</th><th>Distance</th></tr></thead><tbody id="odo-log-body"></tbody></table></div>
+      </div>
       <div class="card">
         <div class="card-hdr">
           <h3>📜 Assignment History</h3>
@@ -357,6 +369,24 @@
   </div>
 </div>
 
+<!-- Admin Edit Trip Dates Modal -->
+<div class="overlay" id="edate-modal">
+  <div class="modal" style="max-width:400px">
+    <h3>✎ Edit Trip Dates</h3>
+    <div id="edate-info" class="modal-info"></div>
+    <div class="form-grid">
+      <div class="field"><label>Departure Date</label><input type="date" id="edate-dep"></div>
+      <div class="field"><label>Return Date</label><input type="date" id="edate-ret"></div>
+    </div>
+    <p class="card-sub" style="margin-bottom:.4rem">Use this to correct mistakenly entered dates that are blocking the calendar. The trip's itinerary dates will be adjusted to match.</p>
+    <div id="edate-msg" class="form-msg"></div>
+    <div class="modal-foot">
+      <button class="btn-sm btn-outline" onclick="closeModal('edate-modal')">Cancel</button>
+      <button class="btn-sm btn-gold" onclick="TD.saveTripDates()">✓ Save Dates</button>
+    </div>
+  </div>
+</div>
+
 <!-- Trip Log Modal (driver start/end) -->
 <div class="overlay" id="tlog-modal">
   <div class="modal" style="max-width:380px">
@@ -387,6 +417,6 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=11"></script>
+<script src="td-app.js?v=12"></script>
 </body>
 </html>
