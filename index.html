@@ -2,11 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>THP-Ghana TripDesk</title>
-<link rel="stylesheet" href="td-styles.css?v=12">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2D3592">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TripDesk">
+<link rel="apple-touch-icon" href="thp_logo.png">
+<link rel="stylesheet" href="td-styles.css?v=14">
 </head>
 <body>
+
+<div id="install-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9998;align-items:center;gap:.6rem;padding:.7rem 1rem;background:rgba(17,20,50,.96);backdrop-filter:blur(8px);color:#fff;box-shadow:0 -4px 20px rgba(0,0,0,.25)">
+  <span style="font-size:1.3rem">🚗</span>
+  <span style="flex:1;font-size:.78rem;line-height:1.4">Install <strong>TripDesk</strong> on your device for quick access</span>
+  <button onclick="tdInstall()" style="background:var(--teal);color:var(--dark);border:none;border-radius:8px;padding:.45rem .9rem;font-size:.76rem;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif">Install</button>
+  <button onclick="tdDismissInstall()" style="background:transparent;color:rgba(255,255,255,.6);border:none;font-size:1.1rem;cursor:pointer;padding:0 .3rem">✕</button>
+</div>
 
 <div id="loading-overlay">
   <div class="lo-ring"><div class="lo-spinner"></div><img class="lo-logo" src="thp_logo.png" alt="THP" onerror="this.style.display='none'"></div>
@@ -298,6 +312,16 @@
       </div>
     </div>
     <div id="admin-staff" class="tabpanel">
+      <div class="card" style="border-left:4px solid var(--teal)">
+        <div class="card-hdr"><h3>📱 Test Notifications</h3></div>
+        <p class="card-sub">Send a test email and SMS to yourself to confirm delivery before relying on it. Enter your own details below.</p>
+        <div class="add-row">
+          <input class="fi" id="test-email" type="email" placeholder="your@email.com" style="flex:1;min-width:160px">
+          <input class="fi" id="test-phone" type="tel" placeholder="Phone e.g. 024 123 4567" style="flex:1;min-width:150px">
+          <button class="btn-sm btn-teal" onclick="TD.sendTest()">Send Test</button>
+        </div>
+        <div id="test-msg" class="form-msg"></div>
+      </div>
       <div class="card" id="add-staff-card">
         <div class="card-hdr"><h3>➕ Add New Staff Member</h3><button class="btn-sm btn-outline" onclick="TD.toggleAddStaffForm()" id="add-staff-toggle">▼ Expand</button></div>
         <div id="add-staff-form" style="display:none">
@@ -311,6 +335,7 @@
             </div>
             <div class="field"><label>Unit / Programme <span class="req">*</span></label><input id="ns-unit" placeholder="e.g. WASH, MEAL, Finance"></div>
             <div class="field"><label>Email</label><input type="email" id="ns-email" placeholder="name@thp-ghana.org"></div>
+            <div class="field"><label>Phone <span class="opt">(for SMS)</span></label><input type="tel" id="ns-phone" placeholder="e.g. 024 123 4567"></div>
             <div class="field"><label>Role</label><select id="ns-role"><option value="staff">Staff</option><option value="driver">Driver</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
             <div class="field"><label>Initial Password <span class="req">*</span></label><input type="text" id="ns-pass" value="1234" placeholder="Default: 1234"></div>
           </div>
@@ -417,6 +442,41 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=12"></script>
+<script src="td-app.js?v=14"></script>
+<script>
+/* ── PWA: register service worker ── */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function (e) {
+      console.warn('SW registration failed:', e);
+    });
+  });
+}
+/* ── PWA: custom install prompt ── */
+let _deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', function (e) {
+  e.preventDefault();
+  _deferredPrompt = e;
+  const bar = document.getElementById('install-bar');
+  if (bar) bar.style.display = 'flex';
+});
+function tdInstall() {
+  const bar = document.getElementById('install-bar');
+  if (!_deferredPrompt) { if (bar) bar.style.display = 'none'; return; }
+  _deferredPrompt.prompt();
+  _deferredPrompt.userChoice.finally(function () {
+    _deferredPrompt = null;
+    if (bar) bar.style.display = 'none';
+  });
+}
+function tdDismissInstall() {
+  const bar = document.getElementById('install-bar');
+  if (bar) bar.style.display = 'none';
+}
+window.addEventListener('appinstalled', function () {
+  const bar = document.getElementById('install-bar');
+  if (bar) bar.style.display = 'none';
+});
+</script>
 </body>
 </html>
