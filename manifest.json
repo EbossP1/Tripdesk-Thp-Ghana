@@ -1,0 +1,31 @@
+{
+  "name": "THP-Ghana TripDesk",
+  "short_name": "TripDesk",
+  "description": "The Hunger Project Ghana — Vehicle Trip Request System",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111432",
+  "theme_color": "#2D3592",
+  "icons": [
+    {
+      "src": "thp_logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "thp_logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "thp_logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
