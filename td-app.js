@@ -1,5 +1,8 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v12
+   THP-GHANA TRIPDESK v14
+   · Admin: Send Test email/SMS button
+   · SMS notifications via Arkesel (sent from GAS, key in Script Properties)
+   · Staff phone numbers for SMS
    · Admin: edit trip dates, On-the-Road view, Odometer Log table
    · Double-booking guard for drivers & vehicles
    · Trip cancellation & edit-resubmit for rejected trips
@@ -23,6 +26,7 @@ function closeModal(id){$(id).classList.remove('open');}
 const SUPA={URL:'https://jhpqzkwzxprsnaczkyjq.supabase.co',KEY:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocHF6a3d6eHByc25hY3preWpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxOTE4NTMsImV4cCI6MjA4OTc2Nzg1M30.GKJz9EhxGP1wTQBiufLoVLxWOstx-9Z0MPWHxj2c8VM'};
 const GAS_URL='https://script.google.com/macros/s/AKfycby1gAE6dkwroOS6IZ_ODXf2c7E41mVLJJG62TBUolp9jLw2TJp7Attw2uakYidZHZNL/exec';
 const ADMIN_EMAIL='eric.koomson@thp.org';
+const ADMIN_PHONE='';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
 const MAX_CONCURRENT=3;
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
@@ -65,8 +69,14 @@ const API={
   gasNotify(p){
     return this.gasPost(p).then(res=>{
       if(!res)return; /* network/CORS — can't confirm either way */
-      if(res.success===false){toast('Email notification failed: '+(res.error||'unknown error'),'err');return;}
+      if(res.success===false){toast('Notification failed: '+(res.error||'unknown error'),'err');return;}
       if(res.skipped&&res.skipped.length)toast('No email sent to: '+res.skipped.join(', '),'info');
+      if(res.smsSkipped&&res.smsSkipped.length){
+        /* Only surface real SMS problems, not the "SMS disabled" noise */
+        const realProblems=res.smsSkipped.filter(x=>!x.includes('SMS disabled'));
+        if(realProblems.length)toast('No SMS sent to: '+realProblems.join(', '),'info');
+      }
+      if(res.smsSent&&res.smsSent.length)toast('📱 SMS sent to '+res.smsSent.length+' recipient'+(res.smsSent.length>1?'s':''),'ok');
     });
   }
 };
@@ -139,7 +149,7 @@ class TripDesk{
       const storedPw=extractPw(s);
       if(storedPw!==hashed&&storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
       saveSession(id);
-      this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''};
+      this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||'',phone:s.phone||''};
       $('lo-text').textContent='Loading trip data…';
       await this._hydrate();this._enter();
     }catch(e){console.error('Login:',e);hideLoader();err.textContent='Connection error. Please try again.';}
@@ -168,7 +178,7 @@ class TripDesk{
       API.get('projects','order=name'),
       API.get('contract_drivers','order=name')
     ]);
-    this.staff=(staff||[]).map(s=>({id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||''}));
+    this.staff=(staff||[]).map(s=>({id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||'',phone:s.phone||''}));
     this.trips=(trips||[]).map(t=>({
       id:t.id,staffId:t.staff_id,officer:t.officer,unit:t.unit,project:t.project||'',
       purpose:t.purpose,stops:parseStops(t.stops),depDate:t.dep_date,retDate:t.ret_date,
@@ -352,13 +362,14 @@ class TripDesk{
 
     /* Supervisor/manager submitting → bypass supervisor stage entirely */
     const userIsSupervisor=isSupervisor(this.user);
-    let supervisorId='',supervisorName='',supervisorEmail='';
+    let supervisorId='',supervisorName='',supervisorEmail='',supervisorPhone='';
 
     if(userIsSupervisor){
       /* No supervisor needed — goes straight to admin */
       supervisorId=this.user.id;
       supervisorName=this.user.name+' (self)';
       supervisorEmail=this.user.email;
+      supervisorPhone=this.user.phone||'';
     }else{
       /* Regular staff — must select a supervisor */
       supervisorId=supervisorEl?.value;
@@ -366,6 +377,7 @@ class TripDesk{
       const supervisorObj=this.staff.find(s=>s.id===supervisorId);
       supervisorName=supervisorObj?.name||'';
       supervisorEmail=supervisorObj?.email||'';
+      supervisorPhone=supervisorObj?.phone||'';
     }
 
     const arr=this._getStops(prefix);
@@ -437,6 +449,7 @@ class TripDesk{
         project,purpose,route:routeChain(stops),depDate,retDate,companions,
         staffEmail:this.user.email,supervisorName,supervisorEmail,
         adminEmail:adminStaff?.email||ADMIN_EMAIL,
+        staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE,
         supervisorNote:'Auto-approved (supervisor self-request)'
       }}).catch(()=>{});
       /* Also refresh supervisor views */
@@ -446,7 +459,8 @@ class TripDesk{
       API.gasNotify({action:'tripSubmitted',data:{
         id,officer:this.user.name,unit:this.user.unit,project,purpose,
         route:routeChain(stops),depDate,retDate,companions,
-        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL
+        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL,
+        staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE
       }}).catch(()=>{});
     }
   }
@@ -499,15 +513,20 @@ class TripDesk{
     toast('Trip cancelled — the slot is now free for others');
     /* Notify admin (and driver if one was assigned) */
     const adminStaff=this.staff.find(s=>s.role==='admin');
-    let driverEmail='';
+    let driverEmail='',driverPhone='';
     if(wasAssigned&&t.driverId){
-      driverEmail=this.staff.find(s=>s.id===t.driverId)?.email||this.contractDrivers.find(d=>d.id===t.driverId)?.email||'';
+      const dStaff=this.staff.find(s=>s.id===t.driverId),dContract=this.contractDrivers.find(d=>d.id===t.driverId);
+      driverEmail=dStaff?.email||dContract?.email||'';
+      driverPhone=dStaff?.phone||dContract?.phone||'';
     }
-    const svEmail=this.staff.find(s=>s.id===t.supervisorId)?.email||'';
+    const svObj=this.staff.find(s=>s.id===t.supervisorId);
+    const officerPhone=this.staff.find(s=>s.id===t.staffId)?.phone||this.user.phone||'';
+    const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
     API.gasNotify({action:'tripCancelled',data:{
       id,officer:t.officer,unit:t.unit,route:routeChain(parseStops(t.stops)),project:t.project,
       depDate:t.depDate,retDate:t.retDate,driver:t.driver||'',vehicle:t.vehicle||'',
-      adminEmail:adminStaff?.email||ADMIN_EMAIL,supervisorEmail:svEmail,supervisorName:t.supervisorName||'',driverEmail
+      adminEmail:adminStaff?.email||ADMIN_EMAIL,supervisorEmail:svObj?.email||'',supervisorName:t.supervisorName||'',driverEmail,staffEmail:officerEmail,
+      adminPhone:adminStaff?.phone||ADMIN_PHONE,supervisorPhone:svObj?.phone||'',driverPhone,staffPhone:officerPhone
     }}).catch(()=>{});
   }
 
@@ -599,11 +618,13 @@ class TripDesk{
     const adminStaff=this.staff.find(s=>s.role==='admin');
     /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
     const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
+    const officerPhone=this.staff.find(s=>s.id===t.staffId)?.phone||'';
     API.gasNotify({action:'supervisorDecision',data:{
       id,status:newStatus,supervisorNote:note,officer:t.officer,
       route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,staffEmail:officerEmail,
-      supervisorName:this.user.name,supervisorEmail:this.user.email,adminEmail:adminStaff?.email||ADMIN_EMAIL
+      supervisorName:this.user.name,supervisorEmail:this.user.email,adminEmail:adminStaff?.email||ADMIN_EMAIL,
+      staffPhone:officerPhone,supervisorPhone:this.user.phone||'',adminPhone:adminStaff?.phone||ADMIN_PHONE
     }}).catch(()=>{});
   }
 
@@ -710,15 +731,15 @@ class TripDesk{
     const isSelfDrive=dId.startsWith('SELF_');
     const isContract=dId.startsWith('CD_');
     const actualDriverId=isSelfDrive?dId.replace('SELF_',''):isContract?dId.replace('CD_',''):dId;
-    let dName='',dEmail='';
+    let dName='',dEmail='',dPhone='';
     if(isSelfDrive){
-      dName=t.officer+' (Self-Driving)';dEmail=t.staffEmail||'';
+      dName=t.officer+' (Self-Driving)';dEmail=t.staffEmail||'';dPhone=this.staff.find(s=>s.id===t.staffId)?.phone||'';
     }else if(isContract){
       const cd=this.contractDrivers.find(d=>d.id===actualDriverId);
-      dName=(cd?.name||'')+'  (Contract)';dEmail=cd?.email||'';
+      dName=(cd?.name||'')+'  (Contract)';dEmail=cd?.email||'';dPhone=cd?.phone||'';
     }else{
       const staffD=this.staff.find(s=>s.id===dId);
-      dName=staffD?.name||'';dEmail=staffD?.email||'';
+      dName=staffD?.name||'';dEmail=staffD?.email||'';dPhone=staffD?.phone||'';
     }
     const veh=this.vehicles.find(v=>v.id===vId);
     const vLabel=veh?veh.plate+' — '+(veh.make||''):'';
@@ -730,14 +751,17 @@ class TripDesk{
     this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
     toast('Trip approved & assigned ✓');
     const svObj=this.staff.find(s=>s.id===t.supervisorId);
+    const adminObj=this.staff.find(s=>s.role==='admin');
     /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
     const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
+    const officerPhone=this.staff.find(s=>s.id===t.staffId)?.phone||'';
     if(!isSelfDrive&&!dEmail)toast('⚠ '+dName+' has no email on file — driver won\'t receive the assignment email','info');
     if(!officerEmail)toast('⚠ '+t.officer+' has no email on file — officer won\'t receive the confirmation email','info');
     API.gasNotify({action:'adminAssigned',data:{
       id,officer:t.officer,route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,driver:dName,vehicle:vLabel,adminNote:note,
-      staffEmail:officerEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?officerEmail:dEmail
+      staffEmail:officerEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?officerEmail:dEmail,
+      staffPhone:officerPhone,supervisorPhone:svObj?.phone||'',driverPhone:isSelfDrive?officerPhone:dPhone,adminPhone:adminObj?.phone||ADMIN_PHONE
     }}).catch(()=>{});
   }
 
@@ -1037,11 +1061,11 @@ class TripDesk{
   /* ── Staff Management ── */
   previewStaffId(){const dateVal=$('ns-joindate')?.value,existingIds=this.staff.map(s=>s.id);const generated=generateStaffId(dateVal,existingIds);const idField=$('ns-id'),hint=$('ns-id-hint');if(idField&&generated){idField.value=generated;if(hint)hint.textContent='Auto-generated · THPG/MM/YYYY';}else if(hint)hint.textContent='Select a join date to auto-generate';}
   toggleAddStaffForm(){const form=$('add-staff-form'),btn=$('add-staff-toggle');if(!form)return;const open=form.style.display==='block';form.style.display=open?'none':'block';if(btn)btn.textContent=open?'▼ Expand':'▲ Collapse';}
-  clearAddStaffForm(){['ns-name','ns-joindate','ns-id','ns-unit','ns-email'].forEach(id=>{const el=$(id);if(el)el.value='';});const r=$('ns-role');if(r)r.value='staff';const m=$('ns-msg');if(m)m.textContent='';const p=$('ns-pass');if(p)p.value='1234';}
+  clearAddStaffForm(){['ns-name','ns-joindate','ns-id','ns-unit','ns-email','ns-phone'].forEach(id=>{const el=$(id);if(el)el.value='';});const r=$('ns-role');if(r)r.value='staff';const m=$('ns-msg');if(m)m.textContent='';const p=$('ns-pass');if(p)p.value='1234';}
   async addStaff(){
     const msg=$('ns-msg');if(msg)msg.textContent='';
     const name=$('ns-name')?.value.trim(),joinDate=$('ns-joindate')?.value,idVal=$('ns-id')?.value.trim().toUpperCase();
-    const unit=$('ns-unit')?.value.trim(),email=$('ns-email')?.value.trim(),role=$('ns-role')?.value||'staff',pass=$('ns-pass')?.value||'1234';
+    const unit=$('ns-unit')?.value.trim(),email=$('ns-email')?.value.trim(),phone=$('ns-phone')?.value.trim(),role=$('ns-role')?.value||'staff',pass=$('ns-pass')?.value||'1234';
     if(!name){if(msg)msg.innerHTML='<span style="color:var(--red)">Full name required.</span>';return;}
     if(!idVal){if(msg)msg.innerHTML='<span style="color:var(--red)">Staff ID required.</span>';return;}
     if(!unit){if(msg)msg.innerHTML='<span style="color:var(--red)">Unit required.</span>';return;}
@@ -1049,9 +1073,9 @@ class TripDesk{
     if(this.staff.find(s=>s.id===idVal)){if(msg)msg.innerHTML=`<span style="color:var(--red)">ID <strong>${idVal}</strong> already exists.</span>`;return;}
     const color=avColor(name);showLoader('Adding…');
     const hashedPass=await hashPassword(pass, idVal);
-    const r=await API.ins('staff',{id:idVal,name,unit,role,email:email||'',password:hashedPass,avatar_color:color,join_date:joinDate||null});
+    const r=await API.ins('staff',{id:idVal,name,unit,role,email:email||'',phone:phone||'',password:hashedPass,avatar_color:color,join_date:joinDate||null});
     hideLoader();if(!r){toast('Failed to add staff','err');return;}
-    this.staff.push({id:idVal,name,unit,role,color,email:email||''});
+    this.staff.push({id:idVal,name,unit,role,color,email:email||'',phone:phone||''});
     this.staff.sort((a,b)=>a.name.localeCompare(b.name));
     if(msg)msg.innerHTML=`<span style="color:var(--green)">✓ <strong>${name}</strong> added as <strong>${idVal}</strong>.</span>`;
     this.clearAddStaffForm();$('add-staff-form').style.display='none';const btn=$('add-staff-toggle');if(btn)btn.textContent='▼ Expand';
@@ -1070,10 +1094,42 @@ class TripDesk{
       return`<div class="scard">
         <div class="scard-top"><div class="av" style="background:${s.color}">${ini(s.name)}</div><div><div class="s-name">${s.name}</div><div class="s-id" style="font-size:.6rem;font-family:monospace;color:var(--teal);font-weight:600">${s.id}</div></div></div>
         <div class="s-unit">${s.unit||'—'} ${roleTag}</div>
-        ${s.email?`<div style="font-size:.6rem;color:var(--text3);margin-bottom:.3rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.email}">✉ ${s.email}</div>`:''}
-        <div class="scard-btns"><button class="btn-sm btn-outline" onclick="TD.resetStaffPass('${s.id}')">🔑 Reset</button><button class="btn-sm btn-red" onclick="TD.removeStaff('${s.id}','${s.name.replace(/'/g,'')}')">🗑</button></div>
+        ${s.email?`<div style="font-size:.6rem;color:var(--text3);margin-bottom:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.email}">✉ ${s.email}</div>`:''}
+        <div style="font-size:.6rem;color:${s.phone?'var(--text3)':'#dc2626'};margin-bottom:.3rem;white-space:nowrap">📞 ${s.phone||'no phone — SMS won\'t reach them'}</div>
+        <div class="scard-btns"><button class="btn-sm btn-teal" onclick="TD.editStaffContact('${s.id}')">✎ Contact</button><button class="btn-sm btn-outline" onclick="TD.resetStaffPass('${s.id}')">🔑 Reset</button><button class="btn-sm btn-red" onclick="TD.removeStaff('${s.id}','${s.name.replace(/'/g,'')}')">🗑</button></div>
       </div>`;
     }).join('');
+  }
+  async sendTest(){
+    const email=$('test-email')?.value.trim(),phone=$('test-phone')?.value.trim(),msg=$('test-msg');
+    if(msg)msg.textContent='';
+    if(!email&&!phone){if(msg)msg.innerHTML='<span style="color:var(--red)">Enter an email or phone to test.</span>';return;}
+    showLoader('Sending test…');
+    const res=await API.gasPost({action:'testEmail',data:{to:email,phone}});
+    hideLoader();
+    if(!res){if(msg)msg.innerHTML='<span style="color:var(--red)">No response from notification server. Check the GAS deployment.</span>';return;}
+    let parts=[];
+    if(res.sent&&res.sent.length)parts.push('✅ Email sent');
+    if(res.skipped&&res.skipped.length)parts.push('⚠ Email: '+res.skipped.join(', '));
+    if(res.smsSent&&res.smsSent.length)parts.push('✅ SMS sent — check your phone');
+    if(res.smsSkipped&&res.smsSkipped.length)parts.push('⚠ SMS: '+res.smsSkipped.join(', '));
+    if(res.smsConfigured===false)parts.push('ℹ SMS is currently OFF (set SMS_ENABLED=true in Script Properties)');
+    if(typeof res.quotaRemaining!=='undefined')parts.push('📧 Email quota left today: '+res.quotaRemaining);
+    if(msg)msg.innerHTML='<span style="color:var(--text2)">'+parts.join('<br>')+'</span>';
+    toast('Test sent — see results below');
+  }
+  async editStaffContact(id){
+    const s=this.staff.find(x=>x.id===id);if(!s)return;
+    const email=prompt('Email for '+s.name+':',s.email||'');
+    if(email===null)return; /* cancelled */
+    const phone=prompt('Phone number for '+s.name+' (for SMS):',s.phone||'');
+    if(phone===null)return;
+    showLoader('Saving…');
+    await API.upd('staff','id=eq.'+encodeURIComponent(id),{email:email.trim(),phone:phone.trim()});
+    hideLoader();
+    s.email=email.trim();s.phone=phone.trim();
+    this.renderStaff();
+    toast('Contact updated for '+s.name);
   }
   async resetStaffPass(id){
     if(!confirm('Reset password to "1234"?'))return;
@@ -1260,7 +1316,7 @@ const TD=new TripDesk();
     const staff=await API.get('staff','id=eq.'+encodeURIComponent(s.id));
     if(!staff||!staff.length){clearSession();hideLoader();if(lv){lv.style.display='';lv.classList.add('active');}if(bg)bg.style.display='';return;}
     const u=staff[0];
-    TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||''};
+    TD.user={id:u.id,name:u.name,unit:(u.unit||'').trim(),role:u.role||'staff',color:u.avatar_color||avColor(u.name),email:u.email||'',phone:u.phone||''};
     $('lo-text').textContent='Loading trip data…';await TD._hydrate();TD._enter();
   }catch(e){
     console.error('Session restore:',e);clearSession();hideLoader();
