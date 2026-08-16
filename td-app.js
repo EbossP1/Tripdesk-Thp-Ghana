@@ -1114,6 +1114,7 @@ class TripDesk{
     if(res.smsSent&&res.smsSent.length)parts.push('✅ SMS sent — check your phone');
     if(res.smsSkipped&&res.smsSkipped.length)parts.push('⚠ SMS: '+res.smsSkipped.join(', '));
     if(res.smsConfigured===false)parts.push('ℹ SMS is currently OFF (set SMS_ENABLED=true in Script Properties)');
+    if(res.smsRaw)parts.push('<span style="font-size:.66rem;color:var(--text3)">Arkesel reply: '+String(res.smsRaw).replace(/</g,'&lt;')+'</span>');
     if(typeof res.quotaRemaining!=='undefined')parts.push('📧 Email quota left today: '+res.quotaRemaining);
     if(msg)msg.innerHTML='<span style="color:var(--text2)">'+parts.join('<br>')+'</span>';
     toast('Test sent — see results below');
