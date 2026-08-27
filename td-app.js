@@ -105,7 +105,7 @@ function routeChainHTML(stops,cls=''){
 class TripDesk{
   constructor(){
     this.user=null;this.staff=[];this.trips=[];this.vehicles=[];this.projects=[];this.contractDrivers=[];
-    this._stStops=[];this._svStops=[];
+    this._stStops=[];this._svStops=[];this._editingTripId=null;
   }
 
   /* ── LOGIN ── */
@@ -409,6 +409,43 @@ class TripDesk{
 
     const adminStaff=this.staff.find(s=>s.role==='admin');
 
+    /* ══ EDIT MODE — update the existing pending trip instead of creating a new one ══ */
+    if(this._editingTripId){
+      const editId=this._editingTripId;
+      const existing=this.trips.find(tr=>tr.id===editId);
+      if(!existing||existing.status!=='pending'){
+        toast('This trip can no longer be edited','err');
+        this._setEditMode(prefix,null);
+        return;
+      }
+      showLoader('Saving changes…');
+      const upd=await API.upd('trips','id=eq.'+encodeURIComponent(editId),{
+        project,purpose,stops:JSON.stringify(stops),dep_date:depDate,ret_date:retDate,
+        companions,supervisor_id:supervisorId,supervisor_name:supervisorName,
+        updated_at:new Date().toISOString()
+      });
+      hideLoader();
+      if(!upd){toast('Server error','err');return;}
+      Object.assign(existing,{project,purpose,stops,depDate,retDate,companions,supervisorId,supervisorName});
+      /* Reset the form out of edit mode */
+      this._setEditMode(prefix,null);
+      projectEl.value='';purposeEl.value='';companionsEl.value='';
+      if(supervisorEl)supervisorEl.value='';
+      this._initStops(prefix);
+      $(isSv?'sv-tr-summary':'tr-summary').style.display='none';
+      this.renderMyTrips(prefix);
+      if(isSv)this.renderSupervisorAllTrips();
+      toast('Your request has been updated ✓');
+      /* Re-notify the supervisor that the request changed */
+      API.gasNotify({action:'tripSubmitted',data:{
+        id:editId,officer:this.user.name,unit:this.user.unit,project,purpose,
+        route:routeChain(stops),depDate,retDate,companions,
+        staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL,
+        staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE
+      }}).catch(()=>{});
+      return;
+    }
+
     /* Set initial status based on role */
     const initialStatus=userIsSupervisor?'supervisor_approved':'pending';
 
@@ -477,7 +514,10 @@ class TripDesk{
       /* Cancellable: not yet rejected/cancelled, trip hasn't started, and departure hasn't passed */
       const canCancel=['pending','supervisor_approved','approved'].includes(t.status)&&!t.tripStartedAt&&t.depDate>=today;
       const canResubmit=t.status==='rejected'||t.status==='cancelled';
+      /* Directly editable only while still pending — nobody has acted on it yet */
+      const canEdit=t.status==='pending';
       let actions='';
+      if(canEdit)actions+=`<button class="btn-sm btn-teal" onclick="TD.editTrip('${t.id}')">✎ Edit Request</button> `;
       if(canCancel)actions+=`<button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.cancelTrip('${t.id}')">⊘ Cancel Trip</button> `;
       if(canResubmit)actions+=`<button class="btn-sm btn-teal" onclick="TD.resubmitTrip('${t.id}')">↻ Edit &amp; Resubmit</button>`;
       return`<div class="trip-card">
@@ -530,12 +570,10 @@ class TripDesk{
     }}).catch(()=>{});
   }
 
-  /* ── EDIT & RESUBMIT (rejected/cancelled trips) ── */
-  resubmitTrip(id){
-    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+  /* ── Shared: prefill the request form from an existing trip ── */
+  _prefillForm(t){
     const stops=parseStops(t.stops);
     const prefix=isSupervisor(this.user)?'sv':'st';
-    /* Prefill the request form */
     const projectEl=$(prefix==='sv'?'sv-tr-project':'tr-project');
     const purposeEl=$(prefix==='sv'?'sv-tr-purpose':'tr-purpose');
     const companionsEl=$(prefix==='sv'?'sv-tr-companions':'tr-companions');
@@ -547,11 +585,67 @@ class TripDesk{
     this._setStops(prefix,stops.length?stops.map(s=>({from:s.from||'',to:s.to||'',dep:s.depDate||'',ret:s.retDate||''})):[{from:'Accra',to:'',dep:'',ret:''}]);
     this._renderStops(prefix);
     this._updateSummary(prefix);
-    /* Switch to the Request tab */
     const scope=prefix==='sv'?'supervisor':'staff';
     const tabs=$(scope+'-tabs');
     const btn=tabs?Array.from(tabs.children).find(b=>b.textContent.includes('Request')):null;
     this.showTab(scope,'request',btn);
+    return prefix;
+  }
+
+  /* ── Edit-mode banner + submit button label ── */
+  _setEditMode(prefix,trip){
+    this._editingTripId=trip?trip.id:null;
+    const scope=prefix==='sv'?'supervisor':'staff';
+    const panel=$(scope+'-request');
+    if(!panel)return;
+    let banner=$(prefix+'-edit-banner');
+    if(trip){
+      if(!banner){
+        banner=document.createElement('div');
+        banner.id=prefix+'-edit-banner';
+        banner.className='clash-box';
+        banner.style.borderLeftColor='var(--teal)';
+        banner.style.background='#ECFDF5';
+        banner.style.color='#065F46';
+        banner.style.borderColor='#6EE7B7';
+        const card=panel.querySelector('.card');
+        if(card)card.insertBefore(banner,card.firstChild);
+      }
+      banner.innerHTML=`✎ <strong>Editing your existing request</strong> (${routeChain(parseStops(trip.stops))}, ${fmt(trip.depDate)}). Make your changes and click <strong>Save Changes</strong>. <button class="btn-sm btn-outline" style="margin-left:.5rem" onclick="TD.cancelEdit('${prefix}')">Cancel edit</button>`;
+      banner.style.display='block';
+    }else if(banner){
+      banner.style.display='none';
+    }
+    /* Update the submit button label */
+    const btns=panel.querySelectorAll('.btn-primary');
+    btns.forEach(b=>{if(b.textContent.includes('Submit')||b.textContent.includes('Save Changes'))b.textContent=trip?'Save Changes':'Submit Request';});
+  }
+
+  cancelEdit(prefix){
+    this._setEditMode(prefix,null);
+    const projectEl=$(prefix==='sv'?'sv-tr-project':'tr-project');
+    const purposeEl=$(prefix==='sv'?'sv-tr-purpose':'tr-purpose');
+    const companionsEl=$(prefix==='sv'?'sv-tr-companions':'tr-companions');
+    if(projectEl)projectEl.value='';if(purposeEl)purposeEl.value='';if(companionsEl)companionsEl.value='';
+    this._initStops(prefix);
+    const sum=$(prefix==='sv'?'sv-tr-summary':'tr-summary');if(sum)sum.style.display='none';
+    toast('Edit cancelled');
+  }
+
+  /* ── EDIT a pending trip (updates in place) ── */
+  editTrip(id){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    if(t.status!=='pending'){toast('This trip can no longer be edited — cancel it and submit a new one instead','err');return;}
+    const prefix=this._prefillForm(t);
+    this._setEditMode(prefix,t);
+    toast('Editing your request — make changes and click Save Changes','info');
+  }
+
+  /* ── EDIT & RESUBMIT (rejected/cancelled trips → creates a NEW trip) ── */
+  resubmitTrip(id){
+    const t=this.trips.find(tr=>tr.id===id);if(!t)return;
+    const prefix=this._prefillForm(t);
+    this._setEditMode(prefix,null); /* not an edit — this creates a new trip */
     toast('Form pre-filled from your previous request — adjust the dates and resubmit','info');
   }
 
