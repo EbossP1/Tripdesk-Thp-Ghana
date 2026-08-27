@@ -14,7 +14,7 @@
      That single change clears the old cache for every user.
 ═══════════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'tripdesk-v15';   // ← bump this on every deploy
+const CACHE_VERSION = 'tripdesk-v16';   // ← bump this on every deploy
 const CACHE_NAME = CACHE_VERSION;
 
 // Core files that make up the app shell (cached for offline fallback)
