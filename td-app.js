@@ -26,7 +26,7 @@ function closeModal(id){$(id).classList.remove('open');}
 const SUPA={URL:'https://jhpqzkwzxprsnaczkyjq.supabase.co',KEY:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocHF6a3d6eHByc25hY3preWpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxOTE4NTMsImV4cCI6MjA4OTc2Nzg1M30.GKJz9EhxGP1wTQBiufLoVLxWOstx-9Z0MPWHxj2c8VM'};
 const GAS_URL='https://script.google.com/macros/s/AKfycby1gAE6dkwroOS6IZ_ODXf2c7E41mVLJJG62TBUolp9jLw2TJp7Attw2uakYidZHZNL/exec';
 const ADMIN_EMAIL='eric.koomson@thp.org';
-const ADMIN_PHONE='';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
+const ADMIN_PHONE='0596902594';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
 const MAX_CONCURRENT=3;
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
@@ -849,12 +849,14 @@ class TripDesk{
     /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
     const officerEmail=t.staffEmail||this.staff.find(s=>s.id===t.staffId)?.email||'';
     const officerPhone=this.staff.find(s=>s.id===t.staffId)?.phone||'';
-    if(!isSelfDrive&&!dEmail)toast('⚠ '+dName+' has no email on file — driver won\'t receive the assignment email','info');
-    if(!officerEmail)toast('⚠ '+t.officer+' has no email on file — officer won\'t receive the confirmation email','info');
+    if(!isSelfDrive&&!dPhone&&!dEmail)toast('⚠ '+dName+' has no phone or email on file — they will NOT be notified','err');
+    else if(!isSelfDrive&&!dPhone)toast('⚠ '+dName+' has no phone on file — notified by email instead','info');
+    if(!officerPhone&&!officerEmail)toast('⚠ '+t.officer+' has no phone or email on file — they will NOT be notified','err');
     API.gasNotify({action:'adminAssigned',data:{
       id,officer:t.officer,route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,driver:dName,vehicle:vLabel,adminNote:note,
       staffEmail:officerEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?officerEmail:dEmail,
+      adminEmail:adminObj?.email||ADMIN_EMAIL,
       staffPhone:officerPhone,supervisorPhone:svObj?.phone||'',driverPhone:isSelfDrive?officerPhone:dPhone,adminPhone:adminObj?.phone||ADMIN_PHONE
     }}).catch(()=>{});
   }
@@ -1306,10 +1308,25 @@ class TripDesk{
       <div style="display:flex;gap:.3rem;align-items:center">
         <span class="cd-badge">Contract</span>
         <span style="flex:1"></span>
-        <button class="btn-sm btn-outline" onclick="TD.toggleCdStatus('${d.id}')">${d.status==='active'?'⏸ Deactivate':'▶ Activate'}</button>
+        <button class="btn-sm btn-teal" onclick="TD.editCdContact('${d.id}')">✎ Contact</button>
+        <button class="btn-sm btn-outline" onclick="TD.toggleCdStatus('${d.id}')">${d.status==='active'?'⏸':'▶'}</button>
         <button class="btn-sm btn-red" onclick="TD.removeContractDriver('${d.id}','${d.name.replace(/'/g,'')}')">🗑</button>
       </div>
     </div>`).join('');
+  }
+
+  async editCdContact(id){
+    const d=this.contractDrivers.find(x=>x.id===id);if(!d)return;
+    const phone=prompt('Phone number for '+d.name+' (for SMS):',d.phone||'');
+    if(phone===null)return;
+    const email=prompt('Email for '+d.name+' (optional):',d.email||'');
+    if(email===null)return;
+    showLoader('Saving…');
+    await API.upd('contract_drivers','id=eq.'+encodeURIComponent(id),{phone:phone.trim(),email:email.trim()});
+    hideLoader();
+    d.phone=phone.trim();d.email=email.trim();
+    this.renderContractDrivers();
+    toast('Contact updated for '+d.name);
   }
 
   async toggleCdStatus(id){
