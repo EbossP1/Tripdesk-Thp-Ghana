@@ -26,7 +26,7 @@ function closeModal(id){$(id).classList.remove('open');}
 const SUPA={URL:'https://jhpqzkwzxprsnaczkyjq.supabase.co',KEY:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocHF6a3d6eHByc25hY3preWpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxOTE4NTMsImV4cCI6MjA4OTc2Nzg1M30.GKJz9EhxGP1wTQBiufLoVLxWOstx-9Z0MPWHxj2c8VM'};
 const GAS_URL='https://script.google.com/macros/s/AKfycby1gAE6dkwroOS6IZ_ODXf2c7E41mVLJJG62TBUolp9jLw2TJp7Attw2uakYidZHZNL/exec';
 const ADMIN_EMAIL='eric.koomson@thp.org';
-const ADMIN_PHONE='0596902594';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
+const ADMIN_PHONE='';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
 const MAX_CONCURRENT=3;
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
@@ -772,7 +772,7 @@ class TripDesk{
         <h4>${t.officer}: ${routeChain(stops)}</h4>
         <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
-        <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">🚗 Assign Driver &amp; Vehicle</button></div>
+        <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">🚗 Assign Driver &amp; Vehicle</button> <button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎ Dates</button> <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button></div>
       </div>`;
     }).join('');
   }
@@ -1075,7 +1075,10 @@ class TripDesk{
             ${logLine}
           </div>
         </div>
-        <div class="hist-time">${fmtTime(t.updatedAt||t.submitted)}</div>
+        <div style="text-align:right">
+          <div class="hist-time">${fmtTime(t.updatedAt||t.submitted)}</div>
+          <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5;margin-top:.4rem" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button>
+        </div>
       </div>`;
     }).join('');
   }
@@ -1099,7 +1102,19 @@ class TripDesk{
       <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎</button> <button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
     </tr>`;}).join('');
   }
-  async deleteTrip(id){if(!confirm('Delete this trip?'))return;await API.del('trips','id=eq.'+encodeURIComponent(id));this.trips=this.trips.filter(t=>t.id!==id);this.renderDash();this.renderAllTrips();this._renderAdminCal();this.renderHistory();toast('Deleted');}
+  async deleteTrip(id){
+    const t=this.trips.find(tr=>tr.id===id);
+    const label=t?`${t.officer} — ${routeChain(parseStops(t.stops))} (${fmt(t.depDate)})`:'this trip';
+    const warn=t&&t.driver?'\n\nDriver and vehicle were assigned — they will be freed.':'';
+    if(!confirm('Permanently delete '+label+'?'+warn+'\n\nThis cannot be undone.'))return;
+    showLoader('Deleting…');
+    const r=await API.del('trips','id=eq.'+encodeURIComponent(id));
+    hideLoader();
+    if(!r){toast('Server error — trip not deleted','err');return;}
+    this.trips=this.trips.filter(x=>x.id!==id);
+    this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
+    toast('Trip deleted — calendar slot freed');
+  }
   /* ── ADMIN — Edit Trip Dates (fix wrongly-entered dates blocking the calendar) ── */
   openEditDates(id){
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
