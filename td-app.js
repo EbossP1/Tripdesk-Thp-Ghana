@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   THP-GHANA TRIPDESK v14
+   THP-GHANA TRIPDESK v19
+   · Audit trail, system health checks, settings, role management
    · Admin: Send Test email/SMS button
    · SMS notifications via Arkesel (sent from GAS, key in Script Properties)
    · Staff phone numbers for SMS
@@ -27,7 +28,8 @@ const SUPA={URL:'https://jhpqzkwzxprsnaczkyjq.supabase.co',KEY:'eyJhbGciOiJIUzI1
 const GAS_URL='https://script.google.com/macros/s/AKfycby1gAE6dkwroOS6IZ_ODXf2c7E41mVLJJG62TBUolp9jLw2TJp7Attw2uakYidZHZNL/exec';
 const ADMIN_EMAIL='eric.koomson@thp.org';
 const ADMIN_PHONE='';  /* ← optional: put admin's phone here in 0XXXXXXXXX or 233XXXXXXXXX format for admin SMS */
-const MAX_CONCURRENT=3;
+let MAX_CONCURRENT=3;              /* overridable from Settings (settings table) */
+let SETTINGS={};                   /* key→value map loaded at hydrate */
 const AV_COLORS=['#2D3592','#3DBFB8','#F5A623','#22c55e','#ef4444','#818cf8','#06b6d4','#f97316','#a855f7','#ec4899'];
 function avColor(n){return AV_COLORS[(n||'').charCodeAt(0)%AV_COLORS.length];}
 
@@ -65,6 +67,17 @@ const API={
   upd(t,q,d){return this._q(t+'?'+q,{method:'PATCH',body:JSON.stringify(d)});},
   del(t,q){return this._q(t+'?'+q,{method:'DELETE'});},
   gasPost(p){return fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(p),redirect:'follow'}).then(r=>r.json()).catch(()=>null);},
+  /* ── AUDIT TRAIL — fire-and-forget; never blocks or breaks the action ── */
+  audit(action,target,detail){
+    try{
+      const u=(window.TD&&TD.user)||{};
+      return this.ins('audit_log',{
+        id:'AUD'+Date.now()+Math.random().toString(36).slice(2,6),
+        actor_id:u.id||'(unknown)',actor_name:u.name||'(unknown)',actor_role:u.role||'',
+        action,target:target||'',detail:detail||'',at:new Date().toISOString()
+      }).catch(()=>null);
+    }catch(e){return null;}
+  },
   /* Sends notification and reports delivery: toasts who was skipped and why */
   gasNotify(p){
     return this.gasPost(p).then(res=>{
@@ -121,6 +134,7 @@ class TripDesk{
         if(String(pass)!==String(adminPass)){hideLoader();err.textContent='Incorrect password.';return;}
         saveSession(id);
         this.user={id:'ADMIN01',name:'Administrator',unit:'Admin',role:'admin',color:'#2D3592',email:''};
+        API.audit('login','','Admin signed in');
         $('lo-text').textContent='Loading trip data…';
         await this._hydrate();this._enter();
         return;
@@ -138,6 +152,7 @@ class TripDesk{
         if(!firstTimeOk&&storedPw!==hashed&&storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
         saveSession(id);
         this.user={id:cd.id,name:cd.name,unit:'Contract Driver',role:'contract_driver',color:'#F5A623',email:cd.email||'',phone:cd.phone||'',license:cd.license_no||''};
+        API.audit('login','','Contract driver signed in');
         $('lo-text').textContent='Loading your trips…';
         await this._hydrate();this._enter();
         return;
@@ -150,6 +165,7 @@ class TripDesk{
       if(storedPw!==hashed&&storedPw!==pass){hideLoader();err.textContent='Incorrect password.';return;}
       saveSession(id);
       this.user={id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||'',phone:s.phone||''};
+      API.audit('login','','Signed in as '+(s.role||'staff'));
       $('lo-text').textContent='Loading trip data…';
       await this._hydrate();this._enter();
     }catch(e){console.error('Login:',e);hideLoader();err.textContent='Connection error. Please try again.';}
@@ -178,6 +194,11 @@ class TripDesk{
       API.get('projects','order=name'),
       API.get('contract_drivers','order=name')
     ]);
+    /* System settings (key/value) — tolerate a missing table */
+    const setRows=await API.get('settings','');
+    SETTINGS={};(setRows||[]).forEach(r=>{SETTINGS[r.key]=r.value;});
+    const mc=parseInt(SETTINGS.max_concurrent,10);
+    if(!isNaN(mc)&&mc>0&&mc<=20)MAX_CONCURRENT=mc;
     this.staff=(staff||[]).map(s=>({id:s.id,name:s.name,unit:(s.unit||'').trim(),role:s.role||'staff',color:s.avatar_color||avColor(s.name),email:s.email||'',phone:s.phone||''}));
     this.trips=(trips||[]).map(t=>({
       id:t.id,staffId:t.staff_id,officer:t.officer,unit:t.unit,project:t.project||'',
@@ -207,6 +228,7 @@ class TripDesk{
         this.renderDash();this.renderAdminPending();this.renderAllTrips();
         this.renderVehicles();this.renderProjects();this.renderStaff();
         this._renderAdminCal();this.renderHistory();this.renderContractDrivers();
+        this.renderSettings();this.loadAudit();
       }else if(role==='contract_driver'){
         this._showView('cdriver-view');
         $('cd-uname').textContent=this.user.name;
@@ -392,8 +414,10 @@ class TripDesk{
       if(i>0&&new Date(s.depDate)<new Date(stops[i-1].retDate))return errEl.textContent=`Stop ${i+1}: Departure can't be before previous return.`;
     }
     const depDate=stops[0].depDate,retDate=stops[stops.length-1].retDate;
-    /* Check peak daily concurrency across the requested range, not total overlapping trips */
-    const overlapping=this.trips.filter(b=>b.status!=='rejected'&&b.status!=='cancelled'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
+    /* Check peak daily concurrency across the requested range, not total overlapping trips.
+       When editing, the trip being edited must NOT count against itself — otherwise its own
+       old dates still occupy a slot and block the new dates. */
+    const overlapping=this.trips.filter(b=>b.id!==this._editingTripId&&b.status!=='rejected'&&b.status!=='cancelled'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
     let peakDay='',peakCount=0;
     const startMs=new Date(depDate).getTime(),endMs=new Date(retDate).getTime();
     for(let d=startMs;d<=endMs;d+=86400000){
@@ -435,6 +459,8 @@ class TripDesk{
       $(isSv?'sv-tr-summary':'tr-summary').style.display='none';
       this.renderMyTrips(prefix);
       if(isSv)this.renderSupervisorAllTrips();
+      this._refreshCalendars();
+      API.audit('trip_edited',editId,routeChain(stops)+' · '+depDate+' → '+retDate);
       toast('Your request has been updated ✓');
       /* Re-notify the supervisor that the request changed */
       API.gasNotify({action:'tripSubmitted',data:{
@@ -476,10 +502,12 @@ class TripDesk{
     this._initStops(prefix);
     $(isSv?'sv-tr-summary':'tr-summary').style.display='none';
     this.renderMyTrips(prefix);
+    this._refreshCalendars();
     if(!this.user.email)toast('⚠ You have no email on your profile — you won\'t receive email updates. Ask admin to add it.','info');
 
     if(userIsSupervisor){
       /* Notify admin directly — trip is ready for assignment */
+      API.audit('trip_submitted',id,routeChain(stops)+' · '+depDate+' → '+retDate+' (auto-approved, supervisor self-request)');
       toast('Trip submitted! Goes directly to admin for assignment.');
       API.gasNotify({action:'supervisorDecision',data:{
         id,status:'supervisor_approved',officer:this.user.name,unit:this.user.unit,
@@ -492,6 +520,7 @@ class TripDesk{
       /* Also refresh supervisor views */
       this.renderSupervisorAllTrips();
     }else{
+      API.audit('trip_submitted',id,routeChain(stops)+' · '+depDate+' → '+retDate+' · supervisor: '+supervisorName);
       toast('Trip submitted! Your supervisor will be notified.');
       API.gasNotify({action:'tripSubmitted',data:{
         id,officer:this.user.name,unit:this.user.unit,project,purpose,
@@ -521,7 +550,7 @@ class TripDesk{
       if(canCancel)actions+=`<button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.cancelTrip('${t.id}')">⊘ Cancel Trip</button> `;
       if(canResubmit)actions+=`<button class="btn-sm btn-teal" onclick="TD.resubmitTrip('${t.id}')">↻ Edit &amp; Resubmit</button>`;
       return`<div class="trip-card">
-        <div class="trip-card-badge">${this._badge(t.status)}</div>
+        <div class="trip-card-badge">${this._badge(t.status,t)}</div>
         <div class="trip-card-route"><div class="route-chain">${routeChainHTML(stops,'route-chain')}</div></div>
         <div class="trip-card-meta">
           <strong>Project:</strong> ${t.project||'—'} · <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)} · <strong>${stops.length} stop${stops.length!==1?'s':''}</strong><br>
@@ -550,6 +579,8 @@ class TripDesk{
     const prefix=isSupervisor(this.user)?'sv':'st';
     this.renderMyTrips(prefix);
     if(prefix==='sv')this.renderSupervisorAllTrips();
+    this._refreshCalendars();
+    API.audit('trip_cancelled',id,t.officer+' · '+routeChain(parseStops(t.stops))+' · '+fmt(t.depDate)+(wasAssigned?' (driver/vehicle freed)':''));
     toast('Trip cancelled — the slot is now free for others');
     /* Notify admin (and driver if one was assigned) */
     const adminStaff=this.staff.find(s=>s.role==='admin');
@@ -665,7 +696,11 @@ class TripDesk{
     }).join('')+'</div>';
   }
 
-  _badge(s){
+  /* A trip is "completed" once its return date has passed — derived, not stored,
+     so back-dated records stop looking like live trips. */
+  _isPast(t){return t&&t.status==='approved'&&t.retDate&&t.retDate<new Date().toISOString().slice(0,10);}
+  _badge(s,t){
+    if(s==='approved'&&this._isPast(t))return'<span class="badge" style="background:#F1F5F9;color:#334155;border:1px solid #CBD5E1">✓ Completed</span>';
     if(s==='approved')return'<span class="badge b-approved">✓ Approved</span>';
     if(s==='rejected')return'<span class="badge b-rejected">✗ Rejected</span>';
     if(s==='cancelled')return'<span class="badge" style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1">⊘ Cancelled</span>';
@@ -708,6 +743,7 @@ class TripDesk{
     t.status=newStatus;t.supervisorNote=note;
     hideLoader();closeModal('sv-modal');
     this.renderSupervisorPending();this.renderSupervisorAllTrips();
+    API.audit(newStatus==='supervisor_approved'?'supervisor_approved':'supervisor_rejected',id,t.officer+' · '+routeChain(parseStops(t.stops))+(note?' · note: '+note:''));
     toast(newStatus==='supervisor_approved'?'Approved — forwarded to admin ✓':'Trip rejected');
     const adminStaff=this.staff.find(s=>s.role==='admin');
     /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
@@ -737,7 +773,7 @@ class TripDesk{
          t.status==='rejected'?'<span style="color:var(--red);font-weight:600">✗ Rejected</span>':
          '<span style="color:var(--green);font-weight:600">✓ Approved</span>')
         :'<span style="color:var(--text3);font-size:.65rem">—</span>';
-      return`<tr><td><strong>${t.officer}</strong></td><td style="font-size:.68rem">${t.unit}</td><td style="font-size:.68rem">${t.project||'—'}</td><td>${routeChainHTML(stops)}</td><td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td>${this._badge(t.status)}</td><td>${myDec}</td></tr>`;
+      return`<tr><td><strong>${t.officer}</strong></td><td style="font-size:.68rem">${t.unit}</td><td style="font-size:.68rem">${t.project||'—'}</td><td>${routeChainHTML(stops)}</td><td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td>${this._badge(t.status,t)}</td><td>${myDec}</td></tr>`;
     }).join('');
   }
 
@@ -745,15 +781,18 @@ class TripDesk{
   renderDash(){
     const total=this.trips.length,pend=this.trips.filter(t=>t.status==='pending').length;
     const svPend=this.trips.filter(t=>t.status==='supervisor_approved').length;
-    const appr=this.trips.filter(t=>t.status==='approved').length;
+    const apprAll=this.trips.filter(t=>t.status==='approved');
+    const done=apprAll.filter(t=>this._isPast(t)).length;
+    const appr=apprAll.length-done;
     $('ad-stats').innerHTML=`
       <div class="stat"><div class="stat-lbl">Total Trips</div><div class="stat-val" style="color:var(--purple)">${total}</div></div>
       <div class="stat"><div class="stat-lbl">With Supervisor</div><div class="stat-val" style="color:var(--gold)">${pend}</div></div>
       <div class="stat"><div class="stat-lbl">Ready to Assign</div><div class="stat-val" style="color:var(--teal)">${svPend}</div></div>
-      <div class="stat"><div class="stat-lbl">Approved</div><div class="stat-val" style="color:var(--green)">${appr}</div></div>
+      <div class="stat"><div class="stat-lbl">Active / Upcoming</div><div class="stat-val" style="color:var(--green)">${appr}</div></div>
+      <div class="stat"><div class="stat-lbl">Completed</div><div class="stat-val" style="color:var(--text2)">${done}</div></div>
       <div class="stat"><div class="stat-lbl">Vehicles</div><div class="stat-val" style="color:#818cf8">${this.vehicles.length}</div></div>`;
     const body=$('ad-recent-body');
-    body.innerHTML=this.trips.slice(0,8).map(t=>`<tr><td><strong>${t.officer}</strong></td><td>${routeChainHTML(parseStops(t.stops))}</td><td style="font-size:.7rem">${t.project||'—'}</td><td style="font-size:.7rem">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td style="font-size:.66rem;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td><td>${this._badge(t.status)}</td></tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:1.5rem">No trips yet</td></tr>';
+    body.innerHTML=this.trips.slice(0,8).map(t=>`<tr><td><strong>${t.officer}</strong></td><td>${routeChainHTML(parseStops(t.stops))}</td><td style="font-size:.7rem">${t.project||'—'}</td><td style="font-size:.7rem">${fmt(t.depDate)} → ${fmt(t.retDate)}</td><td style="font-size:.66rem;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td><td>${this._badge(t.status,t)}</td></tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:1.5rem">No trips yet</td></tr>';
     const uMap={};this.trips.forEach(t=>{uMap[t.unit]=(uMap[t.unit]||0)+1;});
     const uArr=Object.entries(uMap).sort((a,b)=>b[1]-a[1]);const mx=uArr.length?uArr[0][1]:1;
     $('ad-unit-chart').innerHTML=uArr.length?uArr.map(([u,c])=>`<div class="unit-bar"><div class="unit-bar-label"><span>${u}</span><strong>${c}</strong></div><div class="unit-bar-track"><div class="unit-bar-fill" style="width:${Math.round(c/mx*100)}%"></div></div></div>`).join(''):'<div style="color:var(--text3);font-size:.75rem;text-align:center;padding:1rem">No data</div>';
@@ -843,6 +882,7 @@ class TripDesk{
     t.status='approved';t.driver=dName;t.driverId=actualDriverId;t.vehicle=vLabel;t.vehicleId=vId;t.adminNote=note;t.updatedAt=now;
     hideLoader();closeModal('trip-modal');
     this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
+    API.audit('trip_assigned',id,t.officer+' · '+routeChain(parseStops(t.stops))+' · driver: '+dName+' · vehicle: '+vLabel);
     toast('Trip approved & assigned ✓');
     const svObj=this.staff.find(s=>s.id===t.supervisorId);
     const adminObj=this.staff.find(s=>s.role==='admin');
@@ -930,6 +970,13 @@ class TripDesk{
     $('tlog-info').innerHTML=`<strong>Route:</strong> ${routeChain(parseStops(t.stops))}<br><strong>Vehicle:</strong> ${t.vehicle||'—'}${phase==='end'&&t.odoStart!=null?'<br><strong>Odometer at start:</strong> '+Number(t.odoStart).toLocaleString()+' km':''}`;
     $('tlog-odo').value='';$('tlog-msg').textContent='';
     $('tlog-odo-label').textContent=phase==='start'?'Odometer reading at departure (km)':'Odometer reading at return (km)';
+    /* Prefill the timestamp: now for a live trip, the trip's own dates for a past one */
+    const tw=$('tlog-when');
+    if(tw){
+      const base=phase==='start'?t.depDate:t.retDate;
+      const useTrip=this._isPast(t)||(base&&base<new Date().toISOString().slice(0,10));
+      tw.value=useTrip?(base+'T08:00'):new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+    }
     $('tlog-modal').classList.add('open');
   }
   async saveTripLog(){
@@ -940,7 +987,10 @@ class TripDesk{
     const odo=odoRaw===''?null:Number(odoRaw);
     if(odoRaw!==''&&(isNaN(odo)||odo<0)){msg.innerHTML='<span style="color:var(--red)">Enter a valid odometer number.</span>';return;}
     if(phase==='end'&&odo!=null&&t.odoStart!=null&&odo<t.odoStart){msg.innerHTML='<span style="color:var(--red)">End reading can\'t be less than start reading ('+Number(t.odoStart).toLocaleString()+' km).</span>';return;}
-    const now=new Date().toISOString();
+    const whenRaw=$('tlog-when')?.value;
+    const now=whenRaw?new Date(whenRaw).toISOString():new Date().toISOString();
+    if(isNaN(new Date(now).getTime())){msg.innerHTML='<span style="color:var(--red)">Enter a valid date and time.</span>';return;}
+    if(phase==='end'&&t.tripStartedAt&&new Date(now)<new Date(t.tripStartedAt)){msg.innerHTML='<span style="color:var(--red)">End time cannot be before the start time ('+fmtTime(t.tripStartedAt)+').</span>';return;}
     const patch=phase==='start'?{trip_started_at:now,odo_start:odo}:{trip_ended_at:now,odo_end:odo};
     showLoader(phase==='start'?'Starting trip…':'Ending trip…');
     const r=await API.upd('trips','id=eq.'+encodeURIComponent(id),patch);
@@ -951,7 +1001,9 @@ class TripDesk{
     closeModal('tlog-modal');
     /* Re-render whichever driver view is active */
     if(this.user.role==='contract_driver')this.renderDriverTrips();
+    else if(this.user.role==='admin'){this.renderHistory();this.renderDash();this.renderAllTrips();}
     else this.renderDriverTrips('st-assign-cards','st-assign-summary');
+    API.audit(phase==='start'?'trip_started':'trip_ended',id,routeChain(parseStops(t.stops))+(odo!=null?' · odo '+odo+' km':' · no odometer reading'));
     toast(phase==='start'?'Trip started — safe journey! 🚗':'Trip ended — log saved ✓');
   }
 
@@ -1077,7 +1129,9 @@ class TripDesk{
         </div>
         <div style="text-align:right">
           <div class="hist-time">${fmtTime(t.updatedAt||t.submitted)}</div>
-          <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5;margin-top:.4rem" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button>
+          ${!t.tripStartedAt?`<button class="btn-sm btn-outline" style="margin-top:.4rem" onclick="TD.openTripLog('${t.id}','start')" title="Record departure for the record">▶ Log Start</button>`:(!t.tripEndedAt?`<button class="btn-sm btn-gold" style="margin-top:.4rem" onclick="TD.openTripLog('${t.id}','end')" title="Close out this trip">⏹ Log End</button>`:'')}
+          <button class="btn-sm btn-outline" style="margin-top:.3rem" onclick="TD.openEditDates('${t.id}')">✎ Dates</button>
+          <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5;margin-top:.3rem" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button>
         </div>
       </div>`;
     }).join('');
@@ -1098,7 +1152,7 @@ class TripDesk{
       <td>${routeChainHTML(stops)}</td><td style="font-size:.68rem">${t.supervisorName||'—'}</td>
       <td style="font-size:.66rem;white-space:nowrap;color:var(--text2)" title="${fmtTime(t.submitted)}">${fmt(t.submitted)}</td>
       <td style="font-size:.68rem;white-space:nowrap">${fmt(t.depDate)} → ${fmt(t.retDate)}</td>
-      <td>${this._badge(t.status)}</td><td style="font-size:.68rem">${t.driver||'—'}</td><td style="font-size:.68rem">${t.vehicle||'—'}</td>
+      <td>${this._badge(t.status,t)}</td><td style="font-size:.68rem">${t.driver||'—'}</td><td style="font-size:.68rem">${t.vehicle||'—'}</td>
       <td>${t.status==='supervisor_approved'?`<button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">Assign</button> `:''}<button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎</button> <button class="btn-sm btn-outline" onclick="TD.deleteTrip('${t.id}')">🗑</button></td>
     </tr>`;}).join('');
   }
@@ -1113,8 +1167,147 @@ class TripDesk{
     if(!r){toast('Server error — trip not deleted','err');return;}
     this.trips=this.trips.filter(x=>x.id!==id);
     this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
+    API.audit('trip_deleted',id,label);
     toast('Trip deleted — calendar slot freed');
   }
+  /* ══════════════════════════════════════════════════
+     AUDIT TRAIL — who did what, when
+  ══════════════════════════════════════════════════ */
+  async loadAudit(){
+    const rows=await API.get('audit_log','order=at.desc&limit=1000');
+    this.auditRows=(rows||[]).map(r=>({
+      id:r.id,actorId:r.actor_id||'',actorName:r.actor_name||'',actorRole:r.actor_role||'',
+      action:r.action||'',target:r.target||'',detail:r.detail||'',at:r.at||''
+    }));
+    this.renderAudit();
+  }
+  _auditMeta(a){
+    const m={
+      login:['🔑','#64748b'],trip_submitted:['📝','#2D3592'],trip_edited:['✎','#2D3592'],
+      supervisor_approved:['✅','#16a34a'],supervisor_rejected:['❌','#dc2626'],
+      trip_assigned:['🚗','#16a34a'],trip_cancelled:['⊘','#64748b'],trip_deleted:['🗑','#dc2626'],
+      trip_dates_edited:['📅','#F5A623'],trip_started:['▶','#F5A623'],trip_ended:['⏹','#16a34a'],
+      staff_added:['👤','#2D3592'],staff_removed:['🚫','#dc2626'],password_reset:['🔑','#F5A623'],
+      staff_contact_updated:['📞','#3DBFB8'],staff_role_changed:['🛡','#dc2626'],
+      contract_driver_added:['🚐','#2D3592'],contract_driver_removed:['🚫','#dc2626'],
+      settings_changed:['⚙','#dc2626']
+    };
+    return m[a]||['•','#64748b'];
+  }
+  renderAudit(){
+    const body=$('audit-body');if(!body)return;
+    let list=(this.auditRows||[]).slice();
+    const af=$('audit-action')?.value||'',sf=($('audit-search')?.value||'').toLowerCase(),df=$('audit-date')?.value||'';
+    if(af)list=list.filter(r=>r.action===af);
+    if(df)list=list.filter(r=>(r.at||'').slice(0,10)===df);
+    if(sf)list=list.filter(r=>(r.actorName+' '+r.action+' '+r.target+' '+r.detail).toLowerCase().includes(sf));
+    const cnt=$('audit-count');if(cnt)cnt.textContent=list.length;
+    /* Action filter options (built once from the data) */
+    const sel=$('audit-action');
+    if(sel&&sel.options.length<=1){
+      const acts=[...new Set((this.auditRows||[]).map(r=>r.action))].sort();
+      sel.innerHTML='<option value="">All Actions</option>'+acts.map(a=>`<option value="${a}">${a.replace(/_/g,' ')}</option>`).join('');
+    }
+    if(!list.length){body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:1.5rem">No activity recorded yet</td></tr>';return;}
+    body.innerHTML=list.slice(0,400).map(r=>{
+      const[icon,col]=this._auditMeta(r.action);
+      return`<tr>
+        <td style="font-size:.66rem;white-space:nowrap;color:var(--text2)">${fmtTime(r.at)}</td>
+        <td><strong style="font-size:.72rem">${r.actorName}</strong>${r.actorRole?`<br><span style="font-size:.58rem;color:var(--text3)">${r.actorRole}</span>`:''}</td>
+        <td><span style="color:${col};font-weight:700;font-size:.68rem;white-space:nowrap">${icon} ${r.action.replace(/_/g,' ')}</span></td>
+        <td style="font-size:.6rem;font-family:monospace;color:var(--text3)">${r.target||'—'}</td>
+        <td style="font-size:.68rem;color:var(--text2)">${r.detail||'—'}</td>
+      </tr>`;
+    }).join('');
+  }
+  exportAuditCSV(){
+    let csv='Timestamp,Actor,Staff ID,Role,Action,Target,Detail\n';
+    (this.auditRows||[]).forEach(r=>{csv+=`"${fmtTime(r.at)}","${r.actorName}","${r.actorId}","${r.actorRole}","${r.action}","${r.target}","${(r.detail||'').replace(/"/g,'""')}"\n`;});
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='TripDesk_AuditTrail_'+Date.now()+'.csv';a.click();
+  }
+
+  /* ══════════════════════════════════════════════════
+     SETTINGS + SYSTEM HEALTH
+  ══════════════════════════════════════════════════ */
+  renderSettings(){
+    const mc=$('set-max-concurrent');if(mc)mc.value=MAX_CONCURRENT;
+    this.renderHealth();
+  }
+  async saveSettings(){
+    const msg=$('set-msg');if(msg)msg.textContent='';
+    const v=parseInt($('set-max-concurrent')?.value,10);
+    if(isNaN(v)||v<1||v>20){if(msg)msg.innerHTML='<span style="color:var(--red)">Enter a number between 1 and 20.</span>';return;}
+    const prev=MAX_CONCURRENT;
+    showLoader('Saving settings…');
+    /* upsert: try update, insert if the row doesn't exist */
+    let r=await API.upd('settings','key=eq.max_concurrent',{value:String(v)});
+    if(!r||!r.length)r=await API.ins('settings',{key:'max_concurrent',value:String(v)});
+    hideLoader();
+    if(!r){if(msg)msg.innerHTML='<span style="color:var(--red)">Could not save — check the settings table exists.</span>';return;}
+    MAX_CONCURRENT=v;SETTINGS.max_concurrent=String(v);
+    API.audit('settings_changed','max_concurrent','Concurrent trip limit '+prev+' → '+v);
+    if(msg)msg.innerHTML='<span style="color:var(--green)">✓ Saved. Limit is now '+v+' concurrent trips per day.</span>';
+    this._renderAdminCal();this.renderDash();
+    toast('Settings saved');
+  }
+  renderHealth(){
+    const box=$('health-list');if(!box)return;
+    const checks=[];
+    /* 1. Staff contactability */
+    const noContact=this.staff.filter(s=>!s.phone&&!s.email);
+    const noPhone=this.staff.filter(s=>s.phone==='' && s.email);
+    checks.push(noContact.length
+      ? ['err','Staff with no phone AND no email',noContact.length+' cannot be notified at all: '+noContact.map(s=>s.name).slice(0,6).join(', ')+(noContact.length>6?'…':'')]
+      : ['ok','Staff contactability','Every staff member has at least one contact channel']);
+    if(noPhone.length)checks.push(['warn','Staff with no phone',noPhone.length+' will fall back to email: '+noPhone.map(s=>s.name).slice(0,6).join(', ')+(noPhone.length>6?'…':'')]);
+    /* 2. Contract drivers */
+    const cdNo=this.contractDrivers.filter(d=>!d.phone);
+    checks.push(cdNo.length
+      ? ['err','Contract drivers with no phone',cdNo.map(d=>d.name).join(', ')]
+      : ['ok','Contract driver contacts',this.contractDrivers.length+' active contract driver(s), all with phone numbers']);
+    /* 3. Ghost trips — occupy the calendar but have broken itinerary data */
+    const ghosts=this.trips.filter(t=>t.status!=='rejected'&&t.status!=='cancelled'&&(!parseStops(t.stops)||!parseStops(t.stops).length));
+    checks.push(ghosts.length
+      ? ['err','Trips with broken itinerary data',ghosts.length+' trip(s) block the calendar but show no route — IDs: '+ghosts.map(t=>t.id).join(', ')]
+      : ['ok','Trip data integrity','All active trips have valid itineraries']);
+    /* 4. Stuck trips — started but never ended */
+    const today=new Date().toISOString().slice(0,10);
+    const stuck=this.trips.filter(t=>t.tripStartedAt&&!t.tripEndedAt&&t.retDate<today);
+    checks.push(stuck.length
+      ? ['warn','Trips still marked "on trip"',stuck.length+' past their return date and never ended: '+stuck.map(t=>t.officer).join(', ')]
+      : ['ok','Driver trip logs','No overdue open trip logs']);
+    /* 5. Unassigned backlog */
+    const waiting=this.trips.filter(t=>t.status==='supervisor_approved');
+    checks.push(waiting.length
+      ? ['warn','Trips awaiting assignment',waiting.length+' approved trip(s) still need a driver and vehicle']
+      : ['ok','Assignment backlog','Nothing waiting for assignment']);
+    /* 6. Fleet capacity vs limit */
+    const driverCount=this.staff.filter(s=>isDriver(s)).length+this.contractDrivers.length;
+    checks.push(driverCount<MAX_CONCURRENT
+      ? ['warn','Driver capacity','Concurrent limit is '+MAX_CONCURRENT+' but only '+driverCount+' driver(s) exist']
+      : ['ok','Driver capacity',driverCount+' driver(s) available for a limit of '+MAX_CONCURRENT+' concurrent trips']);
+    /* 7. Vehicles */
+    checks.push(this.vehicles.length
+      ? ['ok','Fleet',this.vehicles.length+' vehicle(s) registered']
+      : ['err','Fleet','No vehicles registered — assignment is impossible']);
+    const sev={err:['#dc2626','#FEF2F2','#FCA5A5','✕'],warn:['#9A3412','#FFF7ED','#FDBA74','!'],ok:['#065F46','#ECFDF5','#6EE7B7','✓']};
+    const order={err:0,warn:1,ok:2};
+    checks.sort((a,b)=>order[a[0]]-order[b[0]]);
+    const bad=checks.filter(c=>c[0]==='err').length,warn=checks.filter(c=>c[0]==='warn').length;
+    const sum=$('health-summary');
+    if(sum)sum.innerHTML=bad?`<span style="color:var(--red);font-weight:700">${bad} issue${bad>1?'s':''} need attention</span>${warn?` · ${warn} warning${warn>1?'s':''}`:''}`
+      :warn?`<span style="color:#9A3412;font-weight:700">${warn} warning${warn>1?'s':''}</span> · no critical issues`
+      :'<span style="color:var(--green);font-weight:700">All systems healthy</span>';
+    box.innerHTML=checks.map(([lvl,title,detail])=>{
+      const[c,bg,bd,ic]=sev[lvl];
+      return`<div style="display:flex;gap:.6rem;align-items:flex-start;padding:.6rem .8rem;background:${bg};border:1px solid ${bd};border-radius:10px;margin-bottom:.4rem">
+        <span style="color:${c};font-weight:900;font-size:.8rem;line-height:1.4">${ic}</span>
+        <div style="min-width:0"><div style="font-weight:700;font-size:.75rem;color:${c}">${title}</div>
+        <div style="font-size:.68rem;color:var(--text2);line-height:1.5">${detail}</div></div>
+      </div>`;
+    }).join('');
+  }
+
   /* ── ADMIN — Edit Trip Dates (fix wrongly-entered dates blocking the calendar) ── */
   openEditDates(id){
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
@@ -1147,7 +1340,8 @@ class TripDesk{
     if(!r){toast('Server error','err');return;}
     t.depDate=dep;t.retDate=ret;t.stops=stops;
     closeModal('edate-modal');
-    this.renderDash();this.renderAllTrips();this.renderAdminPending();this._renderAdminCal();this.renderHistory();
+    this.renderDash();this.renderAllTrips();this.renderAdminPending();this._refreshCalendars();this.renderHistory();
+    API.audit('trip_dates_edited',id,t.officer+' · now '+fmt(dep)+' → '+fmt(ret));
     toast('Trip dates corrected ✓ — calendar slots updated');
   }
 
@@ -1190,6 +1384,7 @@ class TripDesk{
     this.staff.sort((a,b)=>a.name.localeCompare(b.name));
     if(msg)msg.innerHTML=`<span style="color:var(--green)">✓ <strong>${name}</strong> added as <strong>${idVal}</strong>.</span>`;
     this.clearAddStaffForm();$('add-staff-form').style.display='none';const btn=$('add-staff-toggle');if(btn)btn.textContent='▼ Expand';
+    API.audit('staff_added',idVal,name+' · '+unit+' · role: '+role);
     this.renderStaff();this._populateUnitFilter();toast(`${name} added ✓`);
   }
   renderStaff(){
@@ -1207,7 +1402,7 @@ class TripDesk{
         <div class="s-unit">${s.unit||'—'} ${roleTag}</div>
         ${s.email?`<div style="font-size:.6rem;color:var(--text3);margin-bottom:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.email}">✉ ${s.email}</div>`:''}
         <div style="font-size:.6rem;color:${s.phone?'var(--text3)':'#dc2626'};margin-bottom:.3rem;white-space:nowrap">📞 ${s.phone||'no phone — SMS won\'t reach them'}</div>
-        <div class="scard-btns"><button class="btn-sm btn-teal" onclick="TD.editStaffContact('${s.id}')">✎ Contact</button><button class="btn-sm btn-outline" onclick="TD.resetStaffPass('${s.id}')">🔑 Reset</button><button class="btn-sm btn-red" onclick="TD.removeStaff('${s.id}','${s.name.replace(/'/g,'')}')">🗑</button></div>
+        <div class="scard-btns"><button class="btn-sm btn-teal" onclick="TD.editStaffContact('${s.id}')">✎ Contact</button><button class="btn-sm btn-outline" onclick="TD.changeStaffRole('${s.id}')">🛡 Role</button><button class="btn-sm btn-outline" onclick="TD.resetStaffPass('${s.id}')">🔑 Reset</button><button class="btn-sm btn-red" onclick="TD.removeStaff('${s.id}','${s.name.replace(/'/g,'')}')">🗑</button></div>
       </div>`;
     }).join('');
   }
@@ -1230,6 +1425,32 @@ class TripDesk{
     if(msg)msg.innerHTML='<span style="color:var(--text2)">'+parts.join('<br>')+'</span>';
     toast('Test sent — see results below');
   }
+  /* ── PRIVILEGES — change a staff member's role ── */
+  async changeStaffRole(id){
+    const s=this.staff.find(x=>x.id===id);if(!s)return;
+    const roles=['staff','driver','supervisor','admin'];
+    const choice=prompt(
+      'Role for '+s.name+'\n\n'
+      +'  staff      — request trips through a supervisor\n'
+      +'  driver     — no trip requests; sees driving assignments\n'
+      +'  supervisor — approves team trips; own requests skip review\n'
+      +'  admin      — full access: assign, settings, audit\n\n'
+      +'Type the new role:', s.role||'staff');
+    if(choice===null)return;
+    const role=choice.trim().toLowerCase();
+    if(!roles.includes(role)){toast('Unknown role — use staff, driver, supervisor or admin','err');return;}
+    if(role===s.role){toast('No change');return;}
+    if(role==='admin'&&!confirm('Grant FULL ADMIN access to '+s.name+'?\n\nThey will be able to assign trips, change settings, manage staff and view the audit trail.'))return;
+    const prev=s.role;
+    showLoader('Updating role…');
+    const r=await API.upd('staff','id=eq.'+encodeURIComponent(id),{role});
+    hideLoader();
+    if(!r){toast('Server error — role not changed','err');return;}
+    s.role=role;
+    API.audit('staff_role_changed',id,s.name+': '+prev+' → '+role);
+    this.renderStaff();this._populateStProjectsAndSupervisors();this._populateSvProjectsAndSupervisors();
+    toast(s.name+' is now '+role);
+  }
   async editStaffContact(id){
     const s=this.staff.find(x=>x.id===id);if(!s)return;
     const email=prompt('Email for '+s.name+':',s.email||'');
@@ -1240,6 +1461,7 @@ class TripDesk{
     await API.upd('staff','id=eq.'+encodeURIComponent(id),{email:email.trim(),phone:phone.trim()});
     hideLoader();
     s.email=email.trim();s.phone=phone.trim();
+    API.audit('staff_contact_updated',id,s.name+' · phone: '+(phone.trim()||'(none)')+' · email: '+(email.trim()||'(none)'));
     this.renderStaff();
     toast('Contact updated for '+s.name);
   }
@@ -1247,9 +1469,10 @@ class TripDesk{
     if(!confirm('Reset password to "1234"?'))return;
     const hashed=await hashPassword('1234', id);
     await API.upd('staff','id=eq.'+encodeURIComponent(id),{password:hashed});
+    API.audit('password_reset',id,'Reset to default by admin');
     toast('Password reset to 1234');
   }
-  async removeStaff(id,name){if(!confirm(`Remove ${name} (${id})?\nTrip history is preserved.`))return;showLoader('Removing…');await API.del('staff','id=eq.'+encodeURIComponent(id));hideLoader();this.staff=this.staff.filter(s=>s.id!==id);this.renderStaff();this._populateUnitFilter();toast(`${name} removed`);}
+  async removeStaff(id,name){if(!confirm(`Remove ${name} (${id})?\nTrip history is preserved.`))return;showLoader('Removing…');await API.del('staff','id=eq.'+encodeURIComponent(id));hideLoader();API.audit('staff_removed',id,name);this.staff=this.staff.filter(s=>s.id!==id);this.renderStaff();this._populateUnitFilter();toast(`${name} removed`);}
 
   /* ── CHANGE PASSWORD (shared for st and sv prefix) ── */
   async changePass(prefix){
@@ -1304,6 +1527,7 @@ class TripDesk{
     if(msg)msg.innerHTML=`<span style="color:var(--green)">✓ <strong>${name}</strong> added as <strong>${idVal}</strong>.</span>`;
     this.clearCdForm();$('add-cd-form').style.display='none';$('add-cd-toggle').textContent='+ Add Driver';
     this.renderContractDrivers();
+    API.audit('contract_driver_added',idVal,name+' · '+phone);
     toast(`${name} (${idVal}) added ✓`);
   }
 
@@ -1359,6 +1583,7 @@ class TripDesk{
     await API.del('contract_drivers','id=eq.'+encodeURIComponent(id));
     hideLoader();
     this.contractDrivers=this.contractDrivers.filter(d=>d.id!==id);
+    API.audit('contract_driver_removed',id,name);
     this.renderContractDrivers();
     toast(`${name} removed`);
   }
@@ -1416,6 +1641,15 @@ class TripDesk{
   }
 
   _renderAdminCal(){this._renderCalendar('ad-calendar',this._adCalM,this._adCalY);}
+
+  /* ── Re-render every availability calendar present in the current view.
+     Must run after ANY change to trip dates/status, or the calendar keeps
+     showing the old dates as occupied until the page is reloaded. ── */
+  _refreshCalendars(){
+    if($('st-calendar'))this._renderCalendar('st-calendar',this._stCalM,this._stCalY);
+    if($('sv-calendar'))this._renderCalendar('sv-calendar',this._svCalM,this._svCalY);
+    if($('ad-calendar'))this._renderCalendar('ad-calendar',this._adCalM,this._adCalY);
+  }
 }
 
 /* ── BOOT ── */
