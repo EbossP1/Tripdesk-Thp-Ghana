@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="TripDesk">
 <link rel="apple-touch-icon" href="thp_logo.png">
-<link rel="stylesheet" href="td-styles.css?v=18">
+<link rel="stylesheet" href="td-styles.css?v=21">
 </head>
 <body>
 
@@ -211,6 +211,8 @@
     <button class="tab" onclick="TD.showTab('admin','cdrivers',this)">🚐 Contract Drivers</button>
     <button class="tab" onclick="TD.showTab('admin','projects',this)">📂 Projects</button>
     <button class="tab" onclick="TD.showTab('admin','staff',this)">👥 Staff</button>
+    <button class="tab" onclick="TD.showTab('admin','audit',this);TD.loadAudit()">🛡 Audit Trail</button>
+    <button class="tab" onclick="TD.showTab('admin','settings',this);TD.renderSettings()">⚙ Settings</button>
   </nav>
   <main class="main-content">
     <div id="admin-dashboard" class="tabpanel active">
@@ -356,6 +358,59 @@
         <div class="staff-grid" id="ad-staff-grid"></div>
       </div>
     </div>
+    <!-- ═══ AUDIT TRAIL ═══ -->
+    <div id="admin-audit" class="tabpanel">
+      <div class="card">
+        <div class="card-hdr">
+          <h3>🛡 Audit Trail</h3>
+          <div class="card-tools">
+            <select class="fi" id="audit-action" onchange="TD.renderAudit()"><option value="">All Actions</option></select>
+            <input class="fi" type="date" id="audit-date" onchange="TD.renderAudit()">
+            <input class="fi" id="audit-search" placeholder="Search person / detail…" oninput="TD.renderAudit()" style="width:170px">
+            <button class="btn-sm btn-outline" onclick="TD.loadAudit()">↻ Refresh</button>
+            <button class="btn-sm btn-teal" onclick="TD.exportAuditCSV()">⬇ CSV</button>
+          </div>
+        </div>
+        <p class="card-sub">Every action taken in TripDesk — who did it, when, and to what. Records cannot be edited from the app.</p>
+        <div class="results-bar">Showing <strong id="audit-count">0</strong> entries <span style="color:var(--text3)">(most recent 400 displayed; export for the full log)</span></div>
+        <div class="scr"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+      </div>
+    </div>
+    <!-- ═══ SETTINGS + HEALTH ═══ -->
+    <div id="admin-settings" class="tabpanel">
+      <div class="card">
+        <div class="card-hdr"><h3>🩺 System Health</h3><span id="health-summary" style="font-size:.72rem"></span></div>
+        <p class="card-sub">Automatic checks on data quality and operational readiness. Fix anything marked ✕ before it causes a failed notification or a blocked calendar.</p>
+        <div id="health-list"></div>
+        <button class="btn-sm btn-outline" onclick="TD.renderHealth()" style="margin-top:.4rem">↻ Re-run checks</button>
+      </div>
+      <div class="card">
+        <h3>⚙ Booking Rules</h3>
+        <p class="card-sub">Changes take effect immediately for everyone and are recorded in the audit trail.</p>
+        <div class="form-grid">
+          <div class="field">
+            <label>Maximum concurrent trips per day</label>
+            <input type="number" id="set-max-concurrent" min="1" max="20">
+            <span style="font-size:.62rem;color:var(--text3);margin-top:.15rem;display:block">Usually one per available driver. Days at this limit show FULL on the availability calendar.</span>
+          </div>
+        </div>
+        <div id="set-msg" class="form-msg"></div>
+        <button class="btn-primary" style="max-width:180px" onclick="TD.saveSettings()">Save Settings</button>
+      </div>
+      <div class="card">
+        <h3>🛡 Access Levels</h3>
+        <p class="card-sub">Roles are assigned per person in the Staff tab using the <strong>🛡 Role</strong> button. Every change is logged.</p>
+        <div class="scr"><table>
+          <thead><tr><th>Role</th><th>Can do</th><th>Cannot do</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Staff</strong></td><td style="font-size:.7rem">Request trips (via supervisor), edit own pending requests, cancel own trips</td><td style="font-size:.7rem">Approve, assign, see others' trips</td></tr>
+            <tr><td><strong>Driver</strong></td><td style="font-size:.7rem">See own assignments, log trip start/end with odometer</td><td style="font-size:.7rem">Request trips, approve, assign</td></tr>
+            <tr><td><strong>Supervisor</strong></td><td style="font-size:.7rem">Approve/reject team requests, view all trips; own requests skip review</td><td style="font-size:.7rem">Assign drivers/vehicles, change settings, view audit trail</td></tr>
+            <tr><td><strong>Admin</strong></td><td style="font-size:.7rem">Everything: assign, edit dates, delete, manage staff/fleet/projects, settings, audit trail</td><td style="font-size:.7rem">—</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
   </main>
 </section>
 
@@ -418,6 +473,7 @@
     <h3 id="tlog-title">Trip Log</h3>
     <div id="tlog-info" class="modal-info"></div>
     <div class="field"><label id="tlog-odo-label">Odometer reading (km)</label><input type="number" id="tlog-odo" placeholder="e.g. 45120" inputmode="numeric" min="0"></div>
+    <div class="field"><label>Date &amp; time</label><input type="datetime-local" id="tlog-when"><span style="font-size:.62rem;color:var(--text3);margin-top:.15rem;display:block">Defaults to now. Change it when recording a trip that already happened.</span></div>
     <p class="card-sub" style="margin-bottom:.4rem">Read the number from the vehicle's dashboard. Leave blank if unreadable.</p>
     <div id="tlog-msg" class="form-msg"></div>
     <div class="modal-foot">
@@ -442,7 +498,7 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=18"></script>
+<script src="td-app.js?v=21"></script>
 <script>
 /* ── PWA: register service worker ── */
 if ('serviceWorker' in navigator) {
