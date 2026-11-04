@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="TripDesk">
 <link rel="apple-touch-icon" href="thp_logo.png">
-<link rel="stylesheet" href="td-styles.css?v=22">
+<link rel="stylesheet" href="td-styles.css?v=25">
 </head>
 <body>
 
@@ -75,6 +75,22 @@
           <div class="field"><label>Project <span class="req">*</span></label><select id="tr-project"><option value="">— Select project —</option></select></div>
           <div class="field"><label>Supervisor <span class="req">*</span></label><select id="tr-supervisor"><option value="">— Select supervisor —</option></select></div>
           <div class="field full"><label>Purpose <span class="req">*</span></label><textarea id="tr-purpose" placeholder="Describe the purpose of the trip…"></textarea></div>
+          <div class="field"><label>Trip Type <span class="req">*</span></label>
+            <select id="tr-type" onchange="TD.onTripTypeChange('st')">
+              <option value="round">🚗 Round trip — vehicle stays with me</option>
+              <option value="dropoff">🔄 Drop off, then pick up later — vehicle returns to base in between</option>
+              <option value="oneway">➡️ One-way drop only</option>
+            </select>
+          </div>
+          <div class="field" id="tr-times-wrap" style="display:none">
+            <label id="tr-times-label">Drop-off &amp; pick-up time</label>
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <input type="time" id="tr-drop" style="flex:1" title="Drop-off time">
+              <span style="color:var(--text3);font-size:.7rem" id="tr-times-sep">→</span>
+              <input type="time" id="tr-pickup" style="flex:1" title="Pick-up time">
+            </div>
+            <span style="font-size:.62rem;color:var(--text3);margin-top:.15rem;display:block" id="tr-times-hint">Times of day only. The drop and pick-up <strong>dates</strong> come from your itinerary below.</span>
+          </div>
         </div>
         <div class="itin-section"><div class="itin-label">🗺 Itinerary <span class="req">*</span></div><div id="stops-list"></div><button class="btn-add-stop" onclick="TD.addStop('st')">+ Add Another Stop</button></div>
         <div class="field"><label>Companions <span class="opt">(optional)</span></label><input id="tr-companions" placeholder="e.g. Enoch Odae, Samuel Agamah"></div>
@@ -131,6 +147,22 @@
           <div class="field"><label>Project <span class="req">*</span></label><select id="sv-tr-project"><option value="">— Select project —</option></select></div>
           <div class="field" id="sv-supervisor-field" style="display:none"><label>Approving Supervisor <span class="req">*</span></label><select id="sv-tr-supervisor"><option value="">— Select supervisor —</option></select></div>
           <div class="field full"><label>Purpose <span class="req">*</span></label><textarea id="sv-tr-purpose" placeholder="Describe the purpose of the trip…"></textarea></div>
+          <div class="field"><label>Trip Type <span class="req">*</span></label>
+            <select id="sv-tr-type" onchange="TD.onTripTypeChange('sv')">
+              <option value="round">🚗 Round trip — vehicle stays with me</option>
+              <option value="dropoff">🔄 Drop off, then pick up later — vehicle returns to base in between</option>
+              <option value="oneway">➡️ One-way drop only</option>
+            </select>
+          </div>
+          <div class="field" id="sv-tr-times-wrap" style="display:none">
+            <label id="sv-tr-times-label">Drop-off &amp; pick-up time</label>
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <input type="time" id="sv-tr-drop" style="flex:1" title="Drop-off time">
+              <span style="color:var(--text3);font-size:.7rem" id="sv-tr-times-sep">→</span>
+              <input type="time" id="sv-tr-pickup" style="flex:1" title="Pick-up time">
+            </div>
+            <span style="font-size:.62rem;color:var(--text3);margin-top:.15rem;display:block" id="sv-tr-times-hint">Times of day only. The drop and pick-up <strong>dates</strong> come from your itinerary below.</span>
+          </div>
         </div>
         <div class="itin-section"><div class="itin-label">🗺 Itinerary <span class="req">*</span></div><div id="sv-stops-list"></div><button class="btn-add-stop" onclick="TD.addStop('sv')">+ Add Another Stop</button></div>
         <div class="field"><label>Companions <span class="opt">(optional)</span></label><input id="sv-tr-companions" placeholder="e.g. Enoch Odae, Samuel Agamah"></div>
@@ -498,7 +530,7 @@
 </div>
 
 <div id="toasts"></div>
-<script src="td-app.js?v=22"></script>
+<script src="td-app.js?v=25"></script>
 <script>
 /* ── PWA: register service worker ── */
 if ('serviceWorker' in navigator) {
