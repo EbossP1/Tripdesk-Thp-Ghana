@@ -698,7 +698,8 @@ class TripDesk{
 
   /* A trip is "completed" once its return date has passed — derived, not stored,
      so back-dated records stop looking like live trips. */
-  _isPast(t){return t&&t.status==='approved'&&t.retDate&&t.retDate<new Date().toISOString().slice(0,10);}
+  _hasEnded(t){return !!(t&&t.retDate&&t.retDate<new Date().toISOString().slice(0,10));}
+  _isPast(t){return !!(t&&t.status==='approved'&&this._hasEnded(t));}
   _badge(s,t){
     if(s==='approved'&&this._isPast(t))return'<span class="badge" style="background:#F1F5F9;color:#334155;border:1px solid #CBD5E1">✓ Completed</span>';
     if(s==='approved')return'<span class="badge b-approved">✓ Approved</span>';
@@ -807,8 +808,9 @@ class TripDesk{
     list.innerHTML=pend.map(t=>{
       const stops=parseStops(t.stops);
       const stopsHTML=stops.length?`<div class="pend-stops">${stops.map((s,i)=>`<div class="pend-stop"><strong>${i+1}.</strong> ${s.from||'—'} <span class="pend-stop-arrow">→</span> ${s.to||'—'} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)} → ${fmt(s.retDate)})</span></div>`).join('')}</div>`:'';
-      return`<div class="pend-card" style="border-left-color:var(--teal)">
-        <h4>${t.officer}: ${routeChain(stops)}</h4>
+      const ended=this._hasEnded(t);
+      return`<div class="pend-card" style="border-left-color:${ended?'#94a3b8':'var(--teal)'}">
+        <h4>${t.officer}: ${routeChain(stops)} ${ended?'<span class="badge" style="background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;font-size:.55rem">⏪ already ended</span>':''}</h4>
         <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
         <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">🚗 Assign Driver &amp; Vehicle</button> <button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎ Dates</button> <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button></div>
@@ -820,9 +822,13 @@ class TripDesk{
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
     const stops=parseStops(t.stops);
     $('tm-title').textContent='Assign: '+t.officer;
-    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`;
+    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`
+      +(this._hasEnded(t)?`<div style="margin-top:.5rem;padding:.45rem .6rem;background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;font-size:.7rem;color:#334155"><strong>⏪ This trip already ended on ${fmt(t.retDate)}.</strong> You are recording it after the fact, so driver and vehicle availability is not enforced — it will be marked <strong>Completed</strong> once saved.</div>`:'');
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
-    /* ── Double-booking guard: find drivers & vehicles committed to other approved trips on overlapping dates ── */
+    /* ── Double-booking guard ──
+       Only meaningful for trips that have not yet ended. A trip being recorded after the
+       fact cannot tie anyone up now, so conflicts are shown as context, never as a block. */
+    const recordingPast=this._hasEnded(t);
     const busyDrivers={},busyVehicles={};
     this.trips.forEach(b=>{
       if(b.id===t.id||b.status!=='approved')return;
@@ -831,23 +837,25 @@ class TripDesk{
       if(b.driverId&&!busyDrivers[b.driverId])busyDrivers[b.driverId]=when;
       if(b.vehicleId&&!busyVehicles[b.vehicleId])busyVehicles[b.vehicleId]=when;
     });
+    const blk=recordingPast?'':'disabled';
+    const mark=recordingPast?' — also on trip ':' — ⛔ on trip ';
     const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>{
       const busy=busyDrivers[d.id];
-      return`<option value="${d.id}" ${busy?'disabled':''}>${d.name}${busy?' — ⛔ on trip '+busy:''}</option>`;
+      return`<option value="${d.id}" ${busy?blk:''}>${d.name}${busy?mark+busy:''}</option>`;
     }).join('');
     const cdOptions=this.contractDrivers.map(d=>{
       const busy=busyDrivers[d.id];
-      return`<option value="CD_${d.id}" ${busy?'disabled':''}>🚐 ${d.name} (${d.id})${busy?' — ⛔ on trip '+busy:''}</option>`;
+      return`<option value="CD_${d.id}" ${busy?blk:''}>🚐 ${d.name} (${d.id})${busy?mark+busy:''}</option>`;
     }).join('');
     const selfBusy=busyDrivers[t.staffId];
-    const selfDriveOpt=`<option value="SELF_${t.staffId}" ${selfBusy?'disabled':''} style="font-weight:600">🚗 Self-Driving — ${t.officer}${selfBusy?' — ⛔ on trip '+selfBusy:''}</option>`;
+    const selfDriveOpt=`<option value="SELF_${t.staffId}" ${selfBusy?blk:''} style="font-weight:600">🚗 Self-Driving — ${t.officer}${selfBusy?mark+selfBusy:''}</option>`;
     $('tm-driver').innerHTML='<option value="">— Select driver —</option>'
       +(driverOptions?`<optgroup label="── Staff Drivers ──">${driverOptions}</optgroup>`:'')
       +(cdOptions?`<optgroup label="── Contract Drivers ──">${cdOptions}</optgroup>`:'')
       +`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
     $('tm-vehicle').innerHTML='<option value="">— Select vehicle —</option>'+this.vehicles.map(v=>{
       const busy=busyVehicles[v.id];
-      return`<option value="${v.id}" ${busy?'disabled':''}>${v.plate} — ${v.make}${busy?' — ⛔ on trip '+busy:''}</option>`;
+      return`<option value="${v.id}" ${busy?blk:''}>${v.plate} — ${v.make}${busy?mark+busy:''}</option>`;
     }).join('');
     $('tm-note').value='';$('tm-id').value=id;$('trip-modal').classList.add('open');
   }
@@ -859,7 +867,7 @@ class TripDesk{
     if(!vId)return toast('Select a vehicle','err');
     /* Final double-booking check at save time */
     const rawDid=dId.startsWith('SELF_')?dId.replace('SELF_',''):dId.startsWith('CD_')?dId.replace('CD_',''):dId;
-    const conflict=this.trips.find(b=>b.id!==t.id&&b.status==='approved'&&t.depDate<=b.retDate&&t.retDate>=b.depDate&&(b.driverId===rawDid||b.vehicleId===vId));
+    const conflict=this._hasEnded(t)?null:this.trips.find(b=>b.id!==t.id&&b.status==='approved'&&t.depDate<=b.retDate&&t.retDate>=b.depDate&&(b.driverId===rawDid||b.vehicleId===vId));
     if(conflict){toast('⛔ Double-booking: '+(conflict.driverId===rawDid?'driver':'vehicle')+' is already on '+conflict.officer+'\'s trip '+fmt(conflict.depDate)+'–'+fmt(conflict.retDate),'err');return;}
     const isSelfDrive=dId.startsWith('SELF_');
     const isContract=dId.startsWith('CD_');
@@ -882,8 +890,9 @@ class TripDesk{
     t.status='approved';t.driver=dName;t.driverId=actualDriverId;t.vehicle=vLabel;t.vehicleId=vId;t.adminNote=note;t.updatedAt=now;
     hideLoader();closeModal('trip-modal');
     this.renderDash();this.renderAdminPending();this.renderAllTrips();this._renderAdminCal();this.renderHistory();
-    API.audit('trip_assigned',id,t.officer+' · '+routeChain(parseStops(t.stops))+' · driver: '+dName+' · vehicle: '+vLabel);
-    toast('Trip approved & assigned ✓');
+    const wasPast=this._hasEnded(t);
+    API.audit('trip_assigned',id,t.officer+' · '+routeChain(parseStops(t.stops))+' · driver: '+dName+' · vehicle: '+vLabel+(wasPast?' (recorded after the trip ended)':''));
+    toast(wasPast?'Recorded ✓ — marked Completed':'Trip approved & assigned ✓');
     const svObj=this.staff.find(s=>s.id===t.supervisorId);
     const adminObj=this.staff.find(s=>s.role==='admin');
     /* Fall back to the officer's CURRENT email if the trip predates their email being on file */
