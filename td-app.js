@@ -621,6 +621,20 @@ class TripDesk{
     }}).catch(()=>{});
   }
 
+  /* ── Click a free day on the availability calendar → start a request on that date ── */
+  requestOn(ds){
+    const prefix=isSupervisor(this.user)?'sv':'st';
+    const scope=prefix==='sv'?'supervisor':'staff';
+    this._setEditMode(prefix,null);
+    const arr=this._getStops(prefix);
+    if(arr&&arr.length){arr[0].dep=ds;if(!arr[0].ret)arr[0].ret=ds;}
+    this._renderStops(prefix);this._updateSummary(prefix);
+    const tabs=$(scope+'-tabs');
+    const btn=tabs?Array.from(tabs.children).find(b=>b.textContent.includes('Request')):null;
+    this.showTab(scope,'request',btn);
+    toast('Starting a request for '+fmt(ds),'info');
+  }
+
   /* ── Shared: prefill the request form from an existing trip ── */
   _prefillForm(t){
     const stops=parseStops(t.stops);
@@ -1736,7 +1750,8 @@ class TripDesk{
         const bg=isFull?'#fee2e2':count===2?'#fef3c7':count===1?'#fef9c3':(!isPast?'#dcfce7':'');
         const borderCol=isFull?'#dc2626':count===2?'#d97706':count===1?'#ca8a04':ds===todayStr?'var(--teal)':'var(--surf3)';
         const textCol=isFull?'#991b1b':count===2?'#92400e':count===1?'#92400e':'inherit';
-        h+=`<div class="cal-day" style="background:${bg};border-color:${borderCol}"><div class="cal-num" style="color:${textCol}">${d}</div>`;
+        const bookable=!isFull&&!isPast&&this.user&&this.user.role!=='driver'&&this.user.role!=='contract_driver';
+        h+=`<div class="cal-day${bookable?' cal-bookable':''}" style="background:${bg};border-color:${borderCol}"${bookable?` onclick="TD.requestOn('${ds}')" title="Request a trip starting ${fmt(ds)}"`:''}><div class="cal-num" style="color:${textCol}">${d}</div>`;
         if(isFull){
           h+=`<span style="font-size:.52rem;font-weight:800;color:#dc2626;display:block">FULL</span>`;
           dayTrips.forEach(t=>{h+=`<span style="font-size:.48rem;color:#7f1d1d;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${t.officer}">${t.officer.split(' ')[0]}</span>`;});
