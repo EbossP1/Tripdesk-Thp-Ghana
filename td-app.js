@@ -388,7 +388,7 @@ class TripDesk{
     const tripType=$(tp+'type')?.value||'round';
     const dropTime=$(tp+'drop')?.value||'';
     const pickupTime=tripType==='dropoff'?($(tp+'pickup')?.value||''):'';
-    if(tripType!=='round'&&!dropTime)return errEl.textContent='Enter the drop-off time.';
+    if(tripType!=='round'&&!dropTime)return errEl.textContent=tripType==='oneway'?'Enter the departure time.':'Enter the drop-off time.';
     if(tripType==='dropoff'&&!pickupTime)return errEl.textContent='Enter the pick-up time.';
     /* Only enforce ordering when the drop and the pick-up are the same day —
        a Monday drop and a Friday pick-up may legitimately be 09:00 → 08:00. */
@@ -753,7 +753,7 @@ class TripDesk{
       return'🔄 Drop off &amp; pick up · drop '+dropTxt+' → pick-up '+pickTxt
         +(b&&b!==a?' <span style="color:var(--green);font-weight:600">(vehicle free in between)</span>':'');
     }
-    if(ty==='oneway')return'➡️ One-way drop'+(t.dropTime?' · '+t.dropTime:'')+' <span style="color:var(--green);font-weight:600">(no return leg)</span>';
+    if(ty==='oneway')return'➡️ One way'+(t.dropTime?' · departs '+t.dropTime:'')+' <span style="color:var(--green);font-weight:600">(single journey — no return leg)</span>';
     return'🚗 Round trip'+(t.dropTime?' · departs '+t.dropTime:'');
   }
   _isDropoff(t){return t&&t.tripType==='dropoff';}
@@ -795,10 +795,10 @@ class TripDesk{
     const showPick=ty==='dropoff';
     if(pu)pu.style.display=showPick?'':'none';
     if(sep)sep.style.display=showPick?'':'none';
-    if(lab)lab.textContent=showPick?'Drop-off time (departure date) → Pick-up time (return date)':'Drop-off time';
+    if(lab)lab.textContent=showPick?'Drop-off time (departure date) → Pick-up time (return date)':'Departure time';
     if(hint)hint.textContent=showPick
       ?'The driver drops you on your departure date and picks you up on your return date. The vehicle is released on the days in between — they stay bookable for others.'
-      :'No pick-up needed — the vehicle returns to base after dropping you.';
+      :'One journey only — outward or return. Use this for airport runs, or when you are travelling on by other means.';
   }
 
   _hasEnded(t){return !!(t&&t.retDate&&t.retDate<new Date().toISOString().slice(0,10));}
