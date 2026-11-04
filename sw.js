@@ -14,7 +14,7 @@
      That single change clears the old cache for every user.
 ═══════════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'tripdesk-v25';   // ← bump this on every deploy
+const CACHE_VERSION = 'tripdesk-v26';   // ← bump this on every deploy
 const CACHE_NAME = CACHE_VERSION;
 
 // Core files that make up the app shell (cached for offline fallback)
@@ -24,6 +24,10 @@ const SHELL_FILES = [
   './td-styles.css',
   './td-app.js',
   './thp_logo.png',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png',
+  './apple-touch-icon.png',
   './manifest.json'
 ];
 
