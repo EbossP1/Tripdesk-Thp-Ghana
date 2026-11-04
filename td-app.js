@@ -208,6 +208,7 @@ class TripDesk{
       driver:t.driver||'',driverId:t.driver_id||'',vehicle:t.vehicle||'',vehicleId:t.vehicle_id||'',
       color:t.color||'',staffEmail:t.staff_email||'',adminNote:t.admin_note||'',
       submitted:t.submitted,updatedAt:t.updated_at||'',
+      tripType:t.trip_type||'round',dropTime:t.drop_time||'',pickupTime:t.pickup_time||'',
       tripStartedAt:t.trip_started_at||'',tripEndedAt:t.trip_ended_at||'',
       odoStart:t.odo_start??null,odoEnd:t.odo_end??null
     }));
@@ -382,6 +383,16 @@ class TripDesk{
     if(!project)return errEl.textContent='Select a project.';
     if(!purpose)return errEl.textContent='Describe the purpose.';
 
+    /* Trip type + times */
+    const tp=isSv?'sv-tr-':'tr-';
+    const tripType=$(tp+'type')?.value||'round';
+    const dropTime=$(tp+'drop')?.value||'';
+    const pickupTime=tripType==='dropoff'?($(tp+'pickup')?.value||''):'';
+    if(tripType!=='round'&&!dropTime)return errEl.textContent='Enter the drop-off time.';
+    if(tripType==='dropoff'&&!pickupTime)return errEl.textContent='Enter the pick-up time.';
+    /* Only enforce ordering when the drop and the pick-up are the same day —
+       a Monday drop and a Friday pick-up may legitimately be 09:00 → 08:00. */
+
     /* Supervisor/manager submitting → bypass supervisor stage entirely */
     const userIsSupervisor=isSupervisor(this.user);
     let supervisorId='',supervisorName='',supervisorEmail='',supervisorPhone='';
@@ -414,15 +425,21 @@ class TripDesk{
       if(i>0&&new Date(s.depDate)<new Date(stops[i-1].retDate))return errEl.textContent=`Stop ${i+1}: Departure can't be before previous return.`;
     }
     const depDate=stops[0].depDate,retDate=stops[stops.length-1].retDate;
+    /* A drop and a pick-up on the SAME day must be in order. Across days
+       (drop Monday, pick-up Friday) any clock times are valid. */
+    if(tripType==='dropoff'&&depDate===retDate&&dropTime&&pickupTime&&pickupTime<=dropTime)
+      return errEl.textContent='Pick-up must be after drop-off when both are on the same day.';
     /* Check peak daily concurrency across the requested range, not total overlapping trips.
        When editing, the trip being edited must NOT count against itself — otherwise its own
        old dates still occupy a slot and block the new dates. */
     const overlapping=this.trips.filter(b=>b.id!==this._editingTripId&&b.status!=='rejected'&&b.status!=='cancelled'&&new Date(depDate)<=new Date(b.retDate)&&new Date(retDate)>=new Date(b.depDate));
     let peakDay='',peakCount=0;
+    const mineDays=this._occupiedDays({tripType,stops,depDate,retDate});
     const startMs=new Date(depDate).getTime(),endMs=new Date(retDate).getTime();
     for(let d=startMs;d<=endMs;d+=86400000){
       const ds=new Date(d).toISOString().slice(0,10);
-      const dayCount=overlapping.filter(b=>ds>=b.depDate&&ds<=b.retDate).length;
+      if(!mineDays.includes(ds))continue;              /* this trip isn't out that day */
+      const dayCount=overlapping.filter(b=>this._occupiesDay(b,ds)).length;
       if(dayCount>peakCount){peakCount=dayCount;peakDay=ds;}
     }
     if(peakCount>=MAX_CONCURRENT){
@@ -446,11 +463,12 @@ class TripDesk{
       const upd=await API.upd('trips','id=eq.'+encodeURIComponent(editId),{
         project,purpose,stops:JSON.stringify(stops),dep_date:depDate,ret_date:retDate,
         companions,supervisor_id:supervisorId,supervisor_name:supervisorName,
+        trip_type:tripType,drop_time:dropTime,pickup_time:pickupTime,
         updated_at:new Date().toISOString()
       });
       hideLoader();
       if(!upd){toast('Server error','err');return;}
-      Object.assign(existing,{project,purpose,stops,depDate,retDate,companions,supervisorId,supervisorName});
+      Object.assign(existing,{project,purpose,stops,depDate,retDate,companions,supervisorId,supervisorName,tripType,dropTime,pickupTime});
       /* Reset the form out of edit mode */
       this._setEditMode(prefix,null);
       projectEl.value='';purposeEl.value='';companionsEl.value='';
@@ -465,7 +483,7 @@ class TripDesk{
       /* Re-notify the supervisor that the request changed */
       API.gasNotify({action:'tripSubmitted',data:{
         id:editId,officer:this.user.name,unit:this.user.unit,project,purpose,
-        route:routeChain(stops),depDate,retDate,companions,
+        route:routeChain(stops),depDate,retDate,companions,tripType,dropTime,pickupTime,
         staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL,
         staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE
       }}).catch(()=>{});
@@ -478,7 +496,8 @@ class TripDesk{
     const id='TRIP'+Date.now();
     const trip={id,staff_id:this.user.id,officer:this.user.name,unit:this.user.unit,project,purpose,
       stops:JSON.stringify(stops),dep_date:depDate,ret_date:retDate,companions,status:initialStatus,
-      color:this.user.color,staff_email:this.user.email,supervisor_id:supervisorId,supervisor_name:supervisorName};
+      color:this.user.color,staff_email:this.user.email,supervisor_id:supervisorId,supervisor_name:supervisorName,
+      trip_type:tripType,drop_time:dropTime,pickup_time:pickupTime};
 
     /* If supervisor, auto-set decided fields */
     if(userIsSupervisor){
@@ -493,7 +512,7 @@ class TripDesk{
 
     this.trips.unshift({id,staffId:this.user.id,officer:this.user.name,unit:this.user.unit,project,purpose,
       stops,depDate,retDate,companions,status:initialStatus,color:this.user.color,
-      staffEmail:this.user.email,supervisorId,supervisorName,
+      staffEmail:this.user.email,supervisorId,supervisorName,tripType,dropTime,pickupTime,
       supervisorNote:userIsSupervisor?'Auto-approved (supervisor self-request)':'',
       driver:'',driverId:'',vehicle:'',vehicleId:'',submitted:new Date().toISOString(),adminNote:'',updatedAt:''});
 
@@ -511,7 +530,7 @@ class TripDesk{
       toast('Trip submitted! Goes directly to admin for assignment.');
       API.gasNotify({action:'supervisorDecision',data:{
         id,status:'supervisor_approved',officer:this.user.name,unit:this.user.unit,
-        project,purpose,route:routeChain(stops),depDate,retDate,companions,
+        project,purpose,route:routeChain(stops),depDate,retDate,companions,tripType,dropTime,pickupTime,
         staffEmail:this.user.email,supervisorName,supervisorEmail,
         adminEmail:adminStaff?.email||ADMIN_EMAIL,
         staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE,
@@ -524,7 +543,7 @@ class TripDesk{
       toast('Trip submitted! Your supervisor will be notified.');
       API.gasNotify({action:'tripSubmitted',data:{
         id,officer:this.user.name,unit:this.user.unit,project,purpose,
-        route:routeChain(stops),depDate,retDate,companions,
+        route:routeChain(stops),depDate,retDate,companions,tripType,dropTime,pickupTime,
         staffEmail:this.user.email,supervisorName,supervisorEmail,adminEmail:adminStaff?.email||ADMIN_EMAIL,
         staffPhone:this.user.phone||'',supervisorPhone,adminPhone:adminStaff?.phone||ADMIN_PHONE
       }}).catch(()=>{});
@@ -554,6 +573,7 @@ class TripDesk{
         <div class="trip-card-route"><div class="route-chain">${routeChainHTML(stops,'route-chain')}</div></div>
         <div class="trip-card-meta">
           <strong>Project:</strong> ${t.project||'—'} · <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)} · <strong>${stops.length} stop${stops.length!==1?'s':''}</strong><br>
+          <strong>Type:</strong> ${this._typeLabel(t)}<br>
           <strong>Purpose:</strong> ${t.purpose||'—'}<br>
           <strong>Supervisor:</strong> ${t.supervisorName||'—'}<br>
           ${t.supervisorNote?'<strong>Supervisor Note:</strong> <em>'+t.supervisorNote+'</em><br>':''}
@@ -613,6 +633,11 @@ class TripDesk{
     if(purposeEl)purposeEl.value=t.purpose||'';
     if(companionsEl)companionsEl.value=t.companions||'';
     if(supervisorEl&&t.supervisorId)supervisorEl.value=t.supervisorId;
+    const fp=prefix==='sv'?'sv-tr-':'tr-';
+    if($(fp+'type'))$(fp+'type').value=t.tripType||'round';
+    if($(fp+'drop'))$(fp+'drop').value=t.dropTime||'';
+    if($(fp+'pickup'))$(fp+'pickup').value=t.pickupTime||'';
+    this.onTripTypeChange(prefix);
     this._setStops(prefix,stops.length?stops.map(s=>({from:s.from||'',to:s.to||'',dep:s.depDate||'',ret:s.retDate||''})):[{from:'Accra',to:'',dep:'',ret:''}]);
     this._renderStops(prefix);
     this._updateSummary(prefix);
@@ -658,6 +683,11 @@ class TripDesk{
     const purposeEl=$(prefix==='sv'?'sv-tr-purpose':'tr-purpose');
     const companionsEl=$(prefix==='sv'?'sv-tr-companions':'tr-companions');
     if(projectEl)projectEl.value='';if(purposeEl)purposeEl.value='';if(companionsEl)companionsEl.value='';
+    const rp=prefix==='sv'?'sv-tr-':'tr-';
+    if($(rp+'type'))$(rp+'type').value='round';
+    if($(rp+'drop'))$(rp+'drop').value='';
+    if($(rp+'pickup'))$(rp+'pickup').value='';
+    this.onTripTypeChange(prefix);
     this._initStops(prefix);
     const sum=$(prefix==='sv'?'sv-tr-summary':'tr-summary');if(sum)sum.style.display='none';
     toast('Edit cancelled');
@@ -698,6 +728,65 @@ class TripDesk{
 
   /* A trip is "completed" once its return date has passed — derived, not stored,
      so back-dated records stop looking like live trips. */
+  /* ── Trip type: round | dropoff | oneway ── */
+  _typeLabel(t){
+    const ty=(t&&t.tripType)||'round';
+    if(ty==='dropoff'){
+      const d=this._occupiedDays(t);
+      const a=d[0],b=d[1];
+      const dropTxt=(a?fmt(a):'—')+(t.dropTime?' '+t.dropTime:'');
+      const pickTxt=(b?fmt(b):(a?fmt(a):'—'))+(t.pickupTime?' '+t.pickupTime:'');
+      return'🔄 Drop off &amp; pick up · drop '+dropTxt+' → pick-up '+pickTxt
+        +(b&&b!==a?' <span style="color:var(--green);font-weight:600">(vehicle free in between)</span>':'');
+    }
+    if(ty==='oneway')return'➡️ One-way drop'+(t.dropTime?' · '+t.dropTime:'')+' <span style="color:var(--green);font-weight:600">(no return leg)</span>';
+    return'🚗 Round trip'+(t.dropTime?' · departs '+t.dropTime:'');
+  }
+  _isDropoff(t){return t&&t.tripType==='dropoff';}
+
+  /* Which calendar days this trip actually occupies a driver + vehicle.
+     Round trip  → every day (the vehicle stays out).
+     Drop & pick up → only the drop day and the pick-up day; the vehicle
+                      returns to base in between and is free for other trips.
+     One-way drop  → only the drop day.
+     Accepts a trip object or a plain {tripType,stops,depDate,retDate}. */
+  _occupiedDays(t){
+    if(!t)return[];
+    const stops=parseStops(t.stops)||[];
+    const first=(stops[0]&&stops[0].depDate)||t.depDate;
+    const last=(stops.length&&stops[stops.length-1].retDate)||t.retDate;
+    const ty=t.tripType||'round';
+    if(ty==='oneway')return first?[first]:[];
+    if(ty==='dropoff'){
+      const d=[];if(first)d.push(first);if(last&&last!==first)d.push(last);return d;
+    }
+    /* Round trip — every day across every leg */
+    const out=new Set();
+    const addRange=(a,b)=>{
+      if(!a)return;const end=b||a;
+      for(let x=new Date(a).getTime();x<=new Date(end).getTime();x+=86400000)
+        out.add(new Date(x).toISOString().slice(0,10));
+    };
+    if(stops.length)stops.forEach(st=>addRange(st.depDate,st.retDate));
+    else addRange(t.depDate,t.retDate);
+    return[...out];
+  }
+  _occupiesDay(t,ds){return this._occupiedDays(t).includes(ds);}
+  onTripTypeChange(prefix){
+    const p=prefix==='sv'?'sv-tr-':'tr-';
+    const ty=$(p+'type')?.value||'round';
+    const wrap=$(p+'times-wrap');if(!wrap)return;
+    const pu=$(p+'pickup'),sep=$(p+'times-sep'),lab=$(p+'times-label'),hint=$(p+'times-hint');
+    wrap.style.display=ty==='round'?'none':'block';
+    const showPick=ty==='dropoff';
+    if(pu)pu.style.display=showPick?'':'none';
+    if(sep)sep.style.display=showPick?'':'none';
+    if(lab)lab.textContent=showPick?'Drop-off time (departure date) → Pick-up time (return date)':'Drop-off time';
+    if(hint)hint.textContent=showPick
+      ?'The driver drops you on your departure date and picks you up on your return date. The vehicle is released on the days in between — they stay bookable for others.'
+      :'No pick-up needed — the vehicle returns to base after dropping you.';
+  }
+
   _hasEnded(t){return !!(t&&t.retDate&&t.retDate<new Date().toISOString().slice(0,10));}
   _isPast(t){return !!(t&&t.status==='approved'&&this._hasEnded(t));}
   _badge(s,t){
@@ -720,7 +809,7 @@ class TripDesk{
       const stopsHTML=stops.length?`<div class="pend-stops">${stops.map((s,i)=>`<div class="pend-stop"><strong>${i+1}.</strong> ${s.from||'—'} <span class="pend-stop-arrow">→</span> ${s.to||'—'} <span style="color:var(--text3);font-size:.65rem">(${fmt(s.depDate)} → ${fmt(s.retDate)})</span></div>`).join('')}</div>`:'';
       return`<div class="pend-card">
         <h4>${t.officer} <span style="font-weight:400;color:var(--text2)">· ${t.unit}</span></h4>
-        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
+        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Type:</strong> ${this._typeLabel(t)}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
         <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openSupervisorModal('${t.id}')">👁 Review &amp; Decide</button></div>
       </div>`;
@@ -731,7 +820,7 @@ class TripDesk{
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
     const stops=parseStops(t.stops);
     $('sv-tm-title').textContent='Review: '+t.officer;
-    $('sv-tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br>${t.companions?'<strong>Companions:</strong> '+t.companions+'<br>':''}<strong>Submitted:</strong> ${fmt(t.submitted)}`;
+    $('sv-tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Type:</strong> ${this._typeLabel(t)}<br>${t.companions?'<strong>Companions:</strong> '+t.companions+'<br>':''}<strong>Submitted:</strong> ${fmt(t.submitted)}`;
     $('sv-tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary (${stops.length} stop${stops.length!==1?'s':''})</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
     $('sv-tm-note').value='';$('sv-tm-id').value=id;$('sv-modal').classList.add('open');
   }
@@ -811,7 +900,7 @@ class TripDesk{
       const ended=this._hasEnded(t);
       return`<div class="pend-card" style="border-left-color:${ended?'#94a3b8':'var(--teal)'}">
         <h4>${t.officer}: ${routeChain(stops)} ${ended?'<span class="badge" style="background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;font-size:.55rem">⏪ already ended</span>':''}</h4>
-        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
+        <div class="pend-meta"><strong>Project:</strong> ${t.project||'—'} · <strong>Unit:</strong> ${t.unit}<br><strong>Purpose:</strong> ${t.purpose||'—'}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Type:</strong> ${this._typeLabel(t)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}${t.companions?' · <strong>With:</strong> '+t.companions:''}<br><strong>📅 Submitted:</strong> <span style="color:var(--teal);font-weight:600">${fmtTime(t.submitted)}</span></div>
         ${stopsHTML}
         <div class="pend-actions"><button class="btn-sm btn-gold" onclick="TD.openAdminModal('${t.id}')">🚗 Assign Driver &amp; Vehicle</button> <button class="btn-sm btn-outline" onclick="TD.openEditDates('${t.id}')" title="Edit dates">✎ Dates</button> <button class="btn-sm btn-outline" style="color:var(--red);border-color:#fca5a5" onclick="TD.deleteTrip('${t.id}')">🗑 Delete</button></div>
       </div>`;
@@ -822,40 +911,47 @@ class TripDesk{
     const t=this.trips.find(tr=>tr.id===id);if(!t)return;
     const stops=parseStops(t.stops);
     $('tm-title').textContent='Assign: '+t.officer;
-    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`
+    $('tm-info').innerHTML=`<strong>Officer:</strong> ${t.officer} (${t.unit})<br><strong>Project:</strong> ${t.project||'—'}<br><strong>Purpose:</strong> ${t.purpose}<br><strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br><strong>Type:</strong> ${this._typeLabel(t)}<br><strong>Supervisor:</strong> ${t.supervisorName||'—'}${t.supervisorNote?' · <em>'+t.supervisorNote+'</em>':''}<br><strong>📅 Submitted:</strong> ${fmtTime(t.submitted)}`
       +(this._hasEnded(t)?`<div style="margin-top:.5rem;padding:.45rem .6rem;background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;font-size:.7rem;color:#334155"><strong>⏪ This trip already ended on ${fmt(t.retDate)}.</strong> You are recording it after the fact, so driver and vehicle availability is not enforced — it will be marked <strong>Completed</strong> once saved.</div>`:'');
     $('tm-stops').innerHTML=stops.length?`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:.3rem">Itinerary</div>`+stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem .5rem;background:var(--surf2);border-radius:6px;margin-bottom:.25rem;font-size:.74rem"><strong style="color:var(--purple)">${i+1}.</strong> ${s.from} <span style="color:var(--teal);font-weight:800">→</span> ${s.to}<span style="color:var(--text3);margin-left:auto;font-size:.65rem">${fmt(s.depDate)} → ${fmt(s.retDate)}</span></div>`).join(''):'';
     /* ── Double-booking guard ──
        Only meaningful for trips that have not yet ended. A trip being recorded after the
        fact cannot tie anyone up now, so conflicts are shown as context, never as a block. */
     const recordingPast=this._hasEnded(t);
+    const tDays=this._occupiedDays(t);
     const busyDrivers={},busyVehicles={};
     this.trips.forEach(b=>{
       if(b.id===t.id||b.status!=='approved')return;
-      if(!(t.depDate<=b.retDate&&t.retDate>=b.depDate))return; /* no date overlap */
-      const when=fmt(b.depDate)+'–'+fmt(b.retDate);
-      if(b.driverId&&!busyDrivers[b.driverId])busyDrivers[b.driverId]=when;
-      if(b.vehicleId&&!busyVehicles[b.vehicleId])busyVehicles[b.vehicleId]=when;
+      const clashDays=tDays.filter(x=>this._occupiesDay(b,x));
+      if(!clashDays.length)return;                        /* never out on the same day */
+      /* Same day, but both are drop/pick-up runs — the vehicle is only tied up
+         for part of each day, so flag it and let admin judge. */
+      const shareable=this._isDropoff(t)&&this._isDropoff(b);
+      const when=clashDays.map(x=>fmt(x)).join(', ')+(shareable&&b.dropTime?' ('+b.dropTime+'→'+(b.pickupTime||'—')+')':'');
+      const rec={when,soft:shareable};
+      if(b.driverId&&!busyDrivers[b.driverId])busyDrivers[b.driverId]=rec;
+      if(b.vehicleId&&!busyVehicles[b.vehicleId])busyVehicles[b.vehicleId]=rec;
     });
-    const blk=recordingPast?'':'disabled';
-    const mark=recordingPast?' — also on trip ':' — ⛔ on trip ';
+    const softAll=recordingPast;
+    const optAttr=b=>(softAll||b.soft)?'':'disabled';
+    const optMark=b=>((softAll||b.soft)?' — also on ':' — ⛔ on trip ')+b.when;
     const driverOptions=this.staff.filter(s=>isDriver(s)).map(d=>{
       const busy=busyDrivers[d.id];
-      return`<option value="${d.id}" ${busy?blk:''}>${d.name}${busy?mark+busy:''}</option>`;
+      return`<option value="${d.id}" ${busy?optAttr(busy):''}>${d.name}${busy?optMark(busy):''}</option>`;
     }).join('');
     const cdOptions=this.contractDrivers.map(d=>{
       const busy=busyDrivers[d.id];
-      return`<option value="CD_${d.id}" ${busy?blk:''}>🚐 ${d.name} (${d.id})${busy?mark+busy:''}</option>`;
+      return`<option value="CD_${d.id}" ${busy?optAttr(busy):''}>🚐 ${d.name} (${d.id})${busy?optMark(busy):''}</option>`;
     }).join('');
     const selfBusy=busyDrivers[t.staffId];
-    const selfDriveOpt=`<option value="SELF_${t.staffId}" ${selfBusy?blk:''} style="font-weight:600">🚗 Self-Driving — ${t.officer}${selfBusy?mark+selfBusy:''}</option>`;
+    const selfDriveOpt=`<option value="SELF_${t.staffId}" ${selfBusy?optAttr(selfBusy):''} style="font-weight:600">🚗 Self-Driving — ${t.officer}${selfBusy?optMark(selfBusy):''}</option>`;
     $('tm-driver').innerHTML='<option value="">— Select driver —</option>'
       +(driverOptions?`<optgroup label="── Staff Drivers ──">${driverOptions}</optgroup>`:'')
       +(cdOptions?`<optgroup label="── Contract Drivers ──">${cdOptions}</optgroup>`:'')
       +`<optgroup label="── Self-Driving ──">${selfDriveOpt}</optgroup>`;
     $('tm-vehicle').innerHTML='<option value="">— Select vehicle —</option>'+this.vehicles.map(v=>{
       const busy=busyVehicles[v.id];
-      return`<option value="${v.id}" ${busy?blk:''}>${v.plate} — ${v.make}${busy?mark+busy:''}</option>`;
+      return`<option value="${v.id}" ${busy?optAttr(busy):''}>${v.plate} — ${v.make}${busy?optMark(busy):''}</option>`;
     }).join('');
     $('tm-note').value='';$('tm-id').value=id;$('trip-modal').classList.add('open');
   }
@@ -867,7 +963,8 @@ class TripDesk{
     if(!vId)return toast('Select a vehicle','err');
     /* Final double-booking check at save time */
     const rawDid=dId.startsWith('SELF_')?dId.replace('SELF_',''):dId.startsWith('CD_')?dId.replace('CD_',''):dId;
-    const conflict=this._hasEnded(t)?null:this.trips.find(b=>b.id!==t.id&&b.status==='approved'&&t.depDate<=b.retDate&&t.retDate>=b.depDate&&(b.driverId===rawDid||b.vehicleId===vId));
+    const myDays=this._occupiedDays(t);
+    const conflict=this._hasEnded(t)?null:this.trips.find(b=>b.id!==t.id&&b.status==='approved'&&!(this._isDropoff(t)&&this._isDropoff(b))&&myDays.some(x=>this._occupiesDay(b,x))&&(b.driverId===rawDid||b.vehicleId===vId));
     if(conflict){toast('⛔ Double-booking: '+(conflict.driverId===rawDid?'driver':'vehicle')+' is already on '+conflict.officer+'\'s trip '+fmt(conflict.depDate)+'–'+fmt(conflict.retDate),'err');return;}
     const isSelfDrive=dId.startsWith('SELF_');
     const isContract=dId.startsWith('CD_');
@@ -904,6 +1001,7 @@ class TripDesk{
     API.gasNotify({action:'adminAssigned',data:{
       id,officer:t.officer,route:routeChain(parseStops(t.stops)),project:t.project,purpose:t.purpose,
       depDate:t.depDate,retDate:t.retDate,driver:dName,vehicle:vLabel,adminNote:note,
+      tripType:t.tripType||'round',dropTime:t.dropTime||'',pickupTime:t.pickupTime||'',
       staffEmail:officerEmail,supervisorName:t.supervisorName,supervisorEmail:svObj?.email||'',driverEmail:isSelfDrive?officerEmail:dEmail,
       adminEmail:adminObj?.email||ADMIN_EMAIL,
       staffPhone:officerPhone,supervisorPhone:svObj?.phone||'',driverPhone:isSelfDrive?officerPhone:dPhone,adminPhone:adminObj?.phone||ADMIN_PHONE
@@ -959,6 +1057,7 @@ class TripDesk{
         <div class="trip-card-meta">
           <strong>Officer:</strong> ${t.officer} · <strong>Unit:</strong> ${t.unit}<br>
           <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)} · <strong>${stops.length} stop${stops.length!==1?'s':''}</strong><br>
+          <strong>Type:</strong> ${this._typeLabel(t)}<br>
           <strong>Project:</strong> ${t.project||'—'}<br>
           <strong>Purpose:</strong> ${t.purpose||'—'}<br>
           <strong>Vehicle:</strong> ${t.vehicle||'—'}
@@ -1129,6 +1228,7 @@ class TripDesk{
           <div class="hist-detail">
             <strong>Project:</strong> ${t.project||'—'} · <strong>Dates:</strong> ${fmt(t.depDate)} → ${fmt(t.retDate)}<br>
             <strong>Purpose:</strong> ${t.purpose||'—'}<br>
+            <strong>Type:</strong> ${this._typeLabel(t)}<br>
             <strong>Driver:</strong> <span class="hist-vehicle-tag">🚗 ${t.driver}</span>
             <strong style="margin-left:.4rem">Vehicle:</strong> <span class="hist-vehicle-tag">🚘 ${t.vehicle||'—'}</span>
             ${t.supervisorName?'<br><strong>Approved by:</strong> '+t.supervisorName:''}
@@ -1355,10 +1455,10 @@ class TripDesk{
   }
 
   exportCSV(){
-    let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Driver,Vehicle,Submitted,Trip Started,Odo Start (km),Trip Ended,Odo End (km),Distance (km)\n';
+    let csv='Officer,Unit,Project,Route,Supervisor,Departure,Return,Status,Trip Type,Drop Time,Pickup Time,Driver,Vehicle,Submitted,Trip Started,Odo Start (km),Trip Ended,Odo End (km),Distance (km)\n';
     this.trips.forEach(t=>{
       const km=(t.odoStart!=null&&t.odoEnd!=null)?(t.odoEnd-t.odoStart):'';
-      csv+=`"${t.officer}","${t.unit}","${t.project||''}","${routeChain(parseStops(t.stops))}","${t.supervisorName||''}","${fmt(t.depDate)}","${fmt(t.retDate)}","${t.status}","${t.driver||''}","${t.vehicle||''}","${fmt(t.submitted)}","${t.tripStartedAt?fmtTime(t.tripStartedAt):''}","${t.odoStart??''}","${t.tripEndedAt?fmtTime(t.tripEndedAt):''}","${t.odoEnd??''}","${km}"\n`;
+      csv+=`"${t.officer}","${t.unit}","${t.project||''}","${routeChain(parseStops(t.stops))}","${t.supervisorName||''}","${fmt(t.depDate)}","${fmt(t.retDate)}","${t.status}","${t.tripType||'round'}","${t.dropTime||''}","${t.pickupTime||''}","${t.driver||''}","${t.vehicle||''}","${fmt(t.submitted)}","${t.tripStartedAt?fmtTime(t.tripStartedAt):''}","${t.odoStart??''}","${t.tripEndedAt?fmtTime(t.tripEndedAt):''}","${t.odoEnd??''}","${km}"\n`;
     });
     const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='TripDesk_'+Date.now()+'.csv';a.click();
   }
@@ -1625,7 +1725,7 @@ class TripDesk{
     for(let i=0;i<first;i++)h+='<div class="cal-day" style="background:transparent;border:none"></div>';
     for(let d=1;d<=days;d++){
       const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const dayTrips=[];this.trips.forEach(t=>{if(t.status==='rejected'||t.status==='cancelled')return;parseStops(t.stops).forEach(s=>{if(ds>=s.depDate&&ds<=s.retDate&&!dayTrips.find(x=>x.id===t.id))dayTrips.push(t);});});
+      const dayTrips=[];this.trips.forEach(t=>{if(t.status==='rejected'||t.status==='cancelled')return;if(this._occupiesDay(t,ds))dayTrips.push(t);});
       const count=dayTrips.length,isPast=ds<todayStr;
       if(isAdmin){
         h+=`<div class="cal-day${ds===todayStr?' today':''}"><div class="cal-num">${d}</div>`;
