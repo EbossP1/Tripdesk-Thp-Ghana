@@ -58,9 +58,23 @@ function extractPw(row){
 
 const API={
   _h(){return{'apikey':SUPA.KEY,'Authorization':'Bearer '+SUPA.KEY,'Content-Type':'application/json','Prefer':'return=representation'};},
+  lastError:'',
   async _q(p,o={}){
-    try{const r=await fetch(SUPA.URL+'/rest/v1/'+p,{headers:this._h(),...o});if(!r.ok){console.warn('Supa',r.status,p);return null;}const t=await r.text();return t?JSON.parse(t):[];}
-    catch(e){console.warn('Supa fetch',e.message);return null;}
+    try{
+      const r=await fetch(SUPA.URL+'/rest/v1/'+p,{headers:this._h(),...o});
+      if(!r.ok){
+        /* PostgREST puts the real reason in the body — keep it, don't swallow it */
+        let body='';try{body=await r.text();}catch(ig){}
+        let msg=body;
+        try{const j=JSON.parse(body);msg=j.message||j.hint||j.details||body;}catch(ig){}
+        this.lastError='HTTP '+r.status+(msg?' — '+msg:'');
+        console.error('Supabase '+r.status+' on '+p+':',body);
+        return null;
+      }
+      this.lastError='';
+      const t=await r.text();return t?JSON.parse(t):[];
+    }
+    catch(e){this.lastError='Network: '+e.message;console.error('Supabase fetch failed',e);return null;}
   },
   get(t,q=''){return this._q(t+(q?'?'+q:''));},
   ins(t,d){return this._q(t,{method:'POST',body:JSON.stringify(d)});},
@@ -508,7 +522,13 @@ class TripDesk{
     showLoader('Submitting…');
     const r=await API.ins('trips',trip);
     hideLoader();
-    if(!r){toast('Server error','err');return;}
+    if(!r){
+      const why=API.lastError||'unknown error';
+      errEl.innerHTML='<strong>Could not save your request.</strong><br><span style="font-size:.7rem">'+why.replace(/</g,'&lt;')+'</span>';
+      toast('Not saved: '+why,'err');
+      console.error('Trip insert payload was:',trip);
+      return;
+    }
 
     this.trips.unshift({id,staffId:this.user.id,officer:this.user.name,unit:this.user.unit,project,purpose,
       stops,depDate,retDate,companions,status:initialStatus,color:this.user.color,
